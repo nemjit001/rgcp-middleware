@@ -2,6 +2,7 @@
 #include "system_headers.h"
 #include "rgcp_utils.h"
 #include "rgcp_worker.h"
+#include "rgcp.h"
 
 struct worker_state
 {
@@ -22,20 +23,46 @@ void worker_state_free(struct worker_state *state)
     close(state->serverfd);
 }
 
-int handle_client_request(struct worker_state *state)
+int client_recv(int fd, struct rgcp_packet *packet)
 {
-    assert(state);
+    // FIXME: change 2048 -> max packet size, only know when packet struct fully defined
+    uint8_t buffer[2048];
+    ssize_t packet_size_bytes = recv(fd, buffer, sizeof(buffer), 0);
 
-    // TODO: write handler function for reading from sock + xtra stuffs
+    if (packet_size_bytes <= 0)
+        return -1;
+
+    memcpy(packet, buffer, packet_size_bytes);
 
     return 0;
 }
 
-int handle_server_request(struct worker_state *state)
+int client_send(__attribute__((unused)) int fd, __attribute__((unused)) struct rgcp_packet *packet)
+{
+    // TODO: implement send
+
+    return -1;
+}
+
+int handle_client_request(struct worker_state *state)
 {
     assert(state);
 
-    // TODO: write handler function for reading from sock + xtra stuffs
+    struct rgcp_packet packet;
+
+    if (client_recv(state->clientfd, &packet) < 0)
+        return -1;
+
+    // TODO: handle packet type here
+
+    return 0;
+}
+
+int handle_server_request(__attribute__((unused)) struct worker_state *state)
+{
+    assert(state);
+
+    // TODO: implement handler function
 
     return 0;
 }
@@ -63,7 +90,7 @@ static int handle_incoming(struct worker_state *state)
     if (FD_ISSET(state->clientfd, &read_fds))
     {
         // handle client incoming data
-        printf("\t[RGCP worker (%d)] client has data for worker\n", state->serverfd);
+        printf("\t[RGCP worker (%d)] client can be read from\n", state->serverfd);
 
         if (handle_client_request(state) != 0)
             success = 0;
@@ -72,7 +99,7 @@ static int handle_incoming(struct worker_state *state)
     if (FD_ISSET(state->serverfd, &read_fds))
     {
         // handle server incoming data
-        printf("\t[RGCP worker (%d)] server has data for worker\n", state->serverfd);
+        printf("\t[RGCP worker (%d)] server can be read from\n", state->serverfd);
 
         if (handle_server_request(state) != 0)
             success = 0;

@@ -20,10 +20,9 @@ struct rgcp_middleware_state
     struct child children[RGCP_MIDDLEWARE_MAX_CLIENTS];
 };
 
-static void handle_sigchld(int signum)
+static void handle_sigchld(__attribute__((unused)) int signum)
 {
     /* do nothing */
-    fprintf(stderr, "[RGCP middleware warning] received signal %d (SIGCHLD)\n", signum);
 }
 
 static void register_signals(void)
@@ -282,7 +281,7 @@ void check_children(struct rgcp_middleware_state *state)
             // exited by signal
             fprintf(stderr, "[RGCP middleware warning] child killed by signal %d\n", WTERMSIG(status));
         }
-        else if (!WIFSIGNALED(status))
+        else if (!WIFEXITED(status))
         {
             // no signal, dunno what exit cause is
             fprintf(stderr, "[RGCP middleware warning] child died of unknown causes ( exit status = 0x%x )\n", status);
