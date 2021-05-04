@@ -31,4 +31,5 @@ target_include_directories(${TARGET_NAME} PRIVATE include)
 
 install(
     TARGETS ${TARGET_NAME}
+    RUNTIME
 )
