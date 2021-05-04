@@ -142,8 +142,8 @@ int handle_connection(struct rgcp_middleware_state *state)
     assert(state);
 
     struct sockaddr_in peer_addr;
-    socklen_t peer_addr_len;
-    pid_t pid;
+    socklen_t peer_addr_len = 0;
+    pid_t pid = 0;
     int sockets[2];
     int connfd = accept(state->listenfd, (struct sockaddr *) & peer_addr, &peer_addr_len);
 
