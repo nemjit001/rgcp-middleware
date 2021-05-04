@@ -22,7 +22,25 @@ void worker_state_free(struct worker_state *state)
     close(state->serverfd);
 }
 
-int worker_handle_incoming(struct worker_state *state)
+int handle_client_request(struct worker_state *state)
+{
+    assert(state);
+
+    // TODO: write handler function for reading from sock + xtra stuffs
+
+    return 0;
+}
+
+int handle_server_request(struct worker_state *state)
+{
+    assert(state);
+
+    // TODO: write handler function for reading from sock + xtra stuffs
+
+    return 0;
+}
+
+static int handle_incoming(struct worker_state *state)
 {
     assert(state);
 
@@ -46,12 +64,18 @@ int worker_handle_incoming(struct worker_state *state)
     {
         // handle client incoming data
         printf("\t[RGCP worker (%d)] client has data for worker\n", state->serverfd);
+
+        if (handle_client_request(state) != 0)
+            success = 0;
     }
 
     if (FD_ISSET(state->serverfd, &read_fds))
     {
         // handle server incoming data
         printf("\t[RGCP worker (%d)] server has data for worker\n", state->serverfd);
+
+        if (handle_server_request(state) != 0)
+            success = 0;
     }
 
     return success ? 0 : -1;
@@ -71,7 +95,7 @@ void worker_start(int serverfd, int clientfd)
 
     while(!state.eof)
     {
-        if (worker_handle_incoming(&state) != 0)
+        if (handle_incoming(&state) != 0)
         {
             success = 0;
             break;
