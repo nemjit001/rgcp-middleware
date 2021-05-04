@@ -10,7 +10,7 @@
 struct child
 {
     int workerfd;
-    int pending;
+    int pending; // TODO: maybe remove?
 };
 
 struct rgcp_middleware_state
