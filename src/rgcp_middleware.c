@@ -1,6 +1,7 @@
 #include "system_headers.h"
 #include "rgcp_utils.h"
 #include "rgcp_worker.h"
+#include "rgcp_workerapi.h"
 #include "rgcp.h"
 
 #define RGCP_MIDDLEWARE_MAX_CLIENT_BACKLOG 5
@@ -10,6 +11,9 @@
 struct child
 {
     int workerfd;
+
+    struct sockaddr_in peer_addr;
+    socklen_t peer_addr_len;
 };
 
 struct rgcp_middleware_state
@@ -110,7 +114,7 @@ int create_listen_socket(uint16_t port)
     return fd;
 }
 
-void register_child(struct rgcp_middleware_state *state, int workerfd)
+void register_child(struct rgcp_middleware_state *state, int workerfd, struct sockaddr_in peer_addr, socklen_t peer_addr_len)
 {
     assert(workerfd >= 0);
     assert(state);
@@ -123,6 +127,8 @@ void register_child(struct rgcp_middleware_state *state, int workerfd)
         {
             state->child_count++;
             state->children[i].workerfd = workerfd;
+            state->children[i].peer_addr = peer_addr;
+            state->children[i].peer_addr_len = peer_addr_len;
             return;
         }
     }
@@ -135,7 +141,6 @@ int handle_connection(struct rgcp_middleware_state *state)
 {
     assert(state);
 
-    // TODO: store peer_addr and peer_addr_len in worker
     struct sockaddr_in peer_addr;
     socklen_t peer_addr_len = 0;
     pid_t pid = 0;
@@ -177,14 +182,14 @@ int handle_connection(struct rgcp_middleware_state *state)
         close(sockets[0]);
         close_serverhandles(state);
         
-        worker_start(sockets[1], connfd, peer_addr, peer_addr_len);
+        worker_start(sockets[1], connfd);
 
         // exit with error if for some reason worker entry function ends up here (shouldn't happen though)
         exit(1);
     }
 
     // in original application, register child and soldier on
-    register_child(state, sockets[0]);
+    register_child(state, sockets[0], peer_addr, peer_addr_len);
 
     close(connfd);
     close(sockets[1]);
@@ -194,9 +199,36 @@ int handle_connection(struct rgcp_middleware_state *state)
 
 int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
 {
-    __attribute__((unused)) struct child *worker = &state->children[worker_index];
+    struct child *worker = &state->children[worker_index];
+    struct rgcp_workerapi_packet packet;
+    memset(&packet, 0, sizeof(packet));
 
     // TODO: use worker api here to read a whole packet and handle accordingly
+    int res = workerapi_recv(worker->workerfd, &packet);
+
+    // if worker has died or read has failed, either case return and let handle_children report error
+    if (res < 0)
+        return 0;
+    
+    printf("[RGCP middleware worker packet from (%d)] type: 0x%x\n", worker->workerfd, packet.type);
+
+    switch(packet.type)
+    {
+    case WORKERAPI_GROUP_CREATE:
+        // TODO: create new group
+        break;
+    case WORKERAPI_GROUP_DISCOVER:
+        // TODO: send back group data
+        break;
+    case WORKERAPI_GROUP_JOIN:
+        // TODO: join user to group
+        break;
+    case WORKERAPI_GROUP_LEAVE:
+        // TODO: delete user from group
+        break;
+    default:
+        break;
+    }
 
     return 0;
 }
