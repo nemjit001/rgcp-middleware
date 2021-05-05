@@ -10,7 +10,6 @@
 struct child
 {
     int workerfd;
-    int pending; // TODO: maybe remove?
 };
 
 struct rgcp_middleware_state
@@ -67,7 +66,6 @@ void rgcp_middleware_state_init(struct rgcp_middleware_state *state)
     for (int i = 0; i < RGCP_MIDDLEWARE_MAX_CLIENTS; i++)
     {
         state->children[i].workerfd = -1;
-        state->children[i].pending = 0;
     }
 }
 
@@ -124,10 +122,7 @@ void register_child(struct rgcp_middleware_state *state, int workerfd)
         if (fd < 0)
         {
             state->child_count++;
-
             state->children[i].workerfd = workerfd;
-            state->children[i].pending = 0;
-
             return;
         }
     }
