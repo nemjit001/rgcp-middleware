@@ -5,8 +5,12 @@
 #include "rgcp.h"
 
 #define RGCP_MIDDLEWARE_MAX_CLIENT_BACKLOG 5
-#define RGCP_MIDDLEWARE_MAX_CLIENTS 20
+
+// FIXME: put this in config file
+#define RGCP_USE_IPV6 0
+#define RGCP_MIDDLEWARE_MAX_CLIENTS 100
 #define RGCP_MIDDLEWARE_MAX_GROUPS 5
+#define RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS ( RGCP_MIDDLEWARE_MAX_CLIENTS / RGCP_MIDDLEWARE_MAX_GROUPS )
 
 struct child
 {
@@ -16,11 +20,20 @@ struct child
     socklen_t peer_addr_len;
 };
 
+struct group
+{
+    int child_count;
+    struct child *children[RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS];
+};
+
 struct rgcp_middleware_state
 {
     int listenfd;
     int child_count;
     struct child children[RGCP_MIDDLEWARE_MAX_CLIENTS];
+
+    // TODO: actually use this
+    struct group groups[RGCP_MIDDLEWARE_MAX_GROUPS];
 };
 
 static void handle_sigchld(__attribute__((unused)) int signum)
@@ -197,6 +210,22 @@ int handle_connection(struct rgcp_middleware_state *state)
     return 0;
 }
 
+int handle_worker_close(struct rgcp_middleware_state *state, int worker_index)
+{
+    assert(state->children[worker_index].workerfd >= 0);
+    printf("Closing");
+
+    close(state->children[worker_index].workerfd);
+    state->children[worker_index].workerfd = -1;
+
+    memset(&state->children[worker_index].peer_addr, 0, sizeof(struct sockaddr_in));
+    state->children[worker_index].peer_addr_len = 0;
+
+    state->child_count--;
+
+    return 0;
+}
+
 int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
 {
     struct child *worker = &state->children[worker_index];
@@ -208,7 +237,15 @@ int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
 
     // if worker has died or read has failed, either case return and let handle_children report error
     if (res < 0)
-        return 0;
+    {
+        perror("Read failed");
+        return -1;
+    }
+
+    if (res == 0)
+    {
+        return handle_worker_close(state, worker_index);
+    }
     
     printf("[RGCP middleware worker packet from (%d)] type: 0x%x\n", worker->workerfd, packet.type);
 
@@ -259,13 +296,19 @@ int handle_incoming(struct rgcp_middleware_state *state)
 
     if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0)
     {
+        // EINTR happens when a worker exits and is reset in the children array
+        if (errno == EINTR)
+            return 0;
+
         perror("Select failed");
         return -1;
     }
 
     if (FD_ISSET(state->listenfd, &read_fds))
+    {
         if (handle_connection(state) < 0)
             success = 0;
+    }
     
     for (int i = 0; i < RGCP_MIDDLEWARE_MAX_CLIENTS; i++)
     {

@@ -23,9 +23,15 @@ int workerapi_recv(int fd, struct rgcp_workerapi_packet *packet)
     uint8_t buffer[2048];
     ssize_t bytes_received = read(fd, buffer, sizeof(buffer));
 
-    // If empty or error remote client has exited or closed socket
-    if (bytes_received <= 0)
+    // If remote client has exited or closed socket
+    if (bytes_received < 0)
+    {
+        perror("Read failed");
         return -1;
+    }
+
+    if (bytes_received == 0)
+        return 0;
 
     memcpy(packet, buffer, bytes_received);
 

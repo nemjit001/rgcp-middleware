@@ -67,11 +67,12 @@ int handle_client_request(struct worker_state *state)
     assert(state);
 
     struct rgcp_packet packet;
+
     int r = client_recv(state->clientfd, &packet);
 
     if (r < 0)
         return -1;
-    
+
     if (r == 0)
     {
         state->eof = 1;
@@ -97,8 +98,15 @@ int handle_server_request(struct worker_state *state)
     struct rgcp_workerapi_packet packet;
     memset(&packet, 0, sizeof(packet));
 
-    if (workerapi_recv(state->serverfd, &packet) < 0)
+    int r = workerapi_recv(state->serverfd, &packet);
+    if (r < 0)
         return -1;
+
+    if (r == 0)
+    {
+        state->eof = 1;
+        return 0;
+    }
     
     printf("\t[RGCP worker (%d) server packet] type: 0x%x\n", state->serverfd, packet.type);
 
