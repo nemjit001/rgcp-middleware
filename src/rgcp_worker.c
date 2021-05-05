@@ -29,19 +29,24 @@ int client_recv(int fd, struct rgcp_packet *packet)
     uint8_t buffer[2048];
     ssize_t packet_size_bytes = recv(fd, buffer, sizeof(buffer), 0);
 
+    // If empty or error remote client has exited or closed socket
     if (packet_size_bytes <= 0)
         return -1;
 
     memcpy(packet, buffer, packet_size_bytes);
 
-    return 0;
+    return packet_size_bytes;
 }
 
 int client_send(__attribute__((unused)) int fd, __attribute__((unused)) struct rgcp_packet *packet)
 {
-    // TODO: implement send
+    ssize_t packet_size_bytes = send(fd, (uint8_t *)packet, sizeof(*packet), 0);
 
-    return -1;
+    // If empty or error remote client has exited or closed socket
+    if (packet_size_bytes <= 0)
+        return -1;
+
+    return packet_size_bytes;
 }
 
 int handle_client_request(struct worker_state *state)
