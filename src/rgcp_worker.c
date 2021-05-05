@@ -8,12 +8,19 @@ struct worker_state
 {
     int serverfd;
     int clientfd;
+    struct sockaddr_in peer_addr;
+    socklen_t peer_addr_len;
     int eof;
 };
 
-void worker_state_init(struct worker_state *state)
+void worker_state_init(struct worker_state *state, int clientfd, int serverfd, struct sockaddr_in peer_addr, socklen_t peer_addr_len)
 {
     memset(state, 0, sizeof(*state));
+
+    state->clientfd = clientfd;
+    state->serverfd = serverfd;
+    state->peer_addr = peer_addr;
+    state->peer_addr_len = peer_addr_len;
 }
 
 void worker_state_free(struct worker_state *state)
@@ -33,8 +40,11 @@ int client_recv(int fd, struct rgcp_packet *packet)
     ssize_t packet_size_bytes = recv(fd, buffer, sizeof(buffer), 0);
 
     // If empty or error remote client has exited or closed socket
-    if (packet_size_bytes <= 0)
+    if (packet_size_bytes < 0)
         return -1;
+
+    if (packet_size_bytes == 0)
+        return 0;
 
     memcpy(packet, buffer, packet_size_bytes);
 
@@ -49,8 +59,11 @@ int client_send(int fd, struct rgcp_packet *packet)
     ssize_t packet_size_bytes = send(fd, (uint8_t *)packet, sizeof(*packet), 0);
 
     // If empty or error remote client has exited or closed socket
-    if (packet_size_bytes <= 0)
+    if (packet_size_bytes < 0)
         return -1;
+
+    if (packet_size_bytes == 0)
+        return 0;
 
     return packet_size_bytes;
 }
@@ -60,9 +73,16 @@ int handle_client_request(struct worker_state *state)
     assert(state);
 
     struct rgcp_packet packet;
+    int r = client_recv(state->clientfd, &packet);
 
-    if (client_recv(state->clientfd, &packet) < 0)
+    if (r < 0)
         return -1;
+    
+    if (r == 0)
+    {
+        state->eof = 1;
+        return 0;
+    }
 
     // TODO: handle packet type here
 
@@ -100,18 +120,12 @@ static int handle_incoming(struct worker_state *state)
 
     if (FD_ISSET(state->clientfd, &read_fds))
     {
-        // handle client incoming data
-        printf("\t[RGCP worker (%d)] client can be read from\n", state->serverfd);
-
         if (handle_client_request(state) != 0)
             success = 0;
     }
 
     if (FD_ISSET(state->serverfd, &read_fds))
     {
-        // handle server incoming data
-        printf("\t[RGCP worker (%d)] server can be read from\n", state->serverfd);
-
         if (handle_server_request(state) != 0)
             success = 0;
     }
@@ -119,17 +133,14 @@ static int handle_incoming(struct worker_state *state)
     return success ? 0 : -1;
 }
 
-void worker_start(int serverfd, int clientfd)
+void worker_start(int serverfd, int clientfd, struct sockaddr_in peer_addr, socklen_t peer_addr_len)
 {
     printf("\t[RGCP worker (%d)] started worker\n", serverfd);
 
     int success = 1;
     struct worker_state state;
 
-    worker_state_init(&state);
-
-    state.clientfd = clientfd;
-    state.serverfd = serverfd;
+    worker_state_init(&state, clientfd, serverfd, peer_addr, peer_addr_len);
 
     while(!state.eof)
     {

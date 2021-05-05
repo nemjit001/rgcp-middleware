@@ -140,6 +140,7 @@ int handle_connection(struct rgcp_middleware_state *state)
 {
     assert(state);
 
+    // TODO: store peer_addr and peer_addr_len in worker
     struct sockaddr_in peer_addr;
     socklen_t peer_addr_len = 0;
     pid_t pid = 0;
@@ -181,7 +182,7 @@ int handle_connection(struct rgcp_middleware_state *state)
         close(sockets[0]);
         close_serverhandles(state);
         
-        worker_start(sockets[1], connfd);
+        worker_start(sockets[1], connfd, peer_addr, peer_addr_len);
 
         // exit with error if for some reason worker entry function ends up here (shouldn't happen though)
         exit(1);

@@ -1,6 +1,7 @@
 #ifndef RGCP_WORKERAPI_H
 #define RGCP_WORKERAPI_H
 
+#include "rgcp.h"
 #include "system_headers.h"
 
 enum workerapi_req_type
@@ -9,7 +10,9 @@ enum workerapi_req_type
     WORKERAPI_GROUP_DISCOVER,
     WORKERAPI_GROUP_DISCOVER_RESPONSE,
     WORKERAPI_GROUP_JOIN,
+    WORKERAPI_NEW_GROUP_MEMBER,
     WORKERAPI_GROUP_LEAVE,
+    WORKERAPI_DELETE_GROUP_MEMBER
 };
 
 struct rgcp_workerapi_packet
