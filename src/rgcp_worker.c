@@ -25,6 +25,9 @@ void worker_state_free(struct worker_state *state)
 
 int client_recv(int fd, struct rgcp_packet *packet)
 {
+    assert(fd >= 0);
+    assert(packet);
+
     // FIXME: change 2048 -> max packet size, only know when packet struct fully defined
     uint8_t buffer[2048];
     ssize_t packet_size_bytes = recv(fd, buffer, sizeof(buffer), 0);
@@ -38,8 +41,11 @@ int client_recv(int fd, struct rgcp_packet *packet)
     return packet_size_bytes;
 }
 
-int client_send(__attribute__((unused)) int fd, __attribute__((unused)) struct rgcp_packet *packet)
+int client_send(int fd, struct rgcp_packet *packet)
 {
+    assert(fd >= 0);
+    assert(packet);
+
     ssize_t packet_size_bytes = send(fd, (uint8_t *)packet, sizeof(*packet), 0);
 
     // If empty or error remote client has exited or closed socket

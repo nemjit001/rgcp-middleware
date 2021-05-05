@@ -3,10 +3,22 @@
 
 #include "system_headers.h"
 
+enum workerapi_req_type
+{
+    WORKERAPI_GROUP_CREATE,
+    WORKERAPI_GROUP_DISCOVER,
+    WORKERAPI_GROUP_DISCOVER_RESPONSE,
+    WORKERAPI_GROUP_JOIN,
+    WORKERAPI_GROUP_LEAVE,
+};
+
 struct rgcp_workerapi_packet
 {
-    size_t datalen;
-    uint8_t data[];
+    enum workerapi_req_type type;
 } __attribute__((packed));
+
+int workerapi_send(int workerfd, struct rgcp_workerapi_packet *packet);
+
+int workerapi_recv(int workerfd, struct rgcp_workerapi_packet *packet);
 
 #endif // RGCP_WORKERAPI_H
