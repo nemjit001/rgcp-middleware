@@ -20,8 +20,8 @@ struct rgcp_workerapi_packet
     enum workerapi_req_type type;
 } __attribute__((packed));
 
-int workerapi_send(int workerfd, struct rgcp_workerapi_packet *packet);
+int workerapi_send(int fd, struct rgcp_workerapi_packet *packet);
 
-int workerapi_recv(int workerfd, struct rgcp_workerapi_packet *packet);
+int workerapi_recv(int fd, struct rgcp_workerapi_packet *packet);
 
 #endif // RGCP_WORKERAPI_H

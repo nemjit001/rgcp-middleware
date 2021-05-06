@@ -62,14 +62,64 @@ int client_send(int fd, struct rgcp_packet *packet)
     return packet_size_bytes;
 }
 
+int send_workerapi_discovery_request(struct worker_state *state)
+{
+    struct rgcp_workerapi_packet packet;
+    memset(&packet, 0, sizeof(packet));
+
+    packet.type = WORKERAPI_GROUP_DISCOVER;
+
+    return workerapi_send(state->serverfd, &packet);
+}
+
+int send_workerapi_group_create_request(struct worker_state *state, struct rgcp_packet *packet)
+{
+    assert(state);
+    assert(packet);
+
+    printf("\tgroup creation request\n");
+    // TODO: implement this
+
+    return 0;
+}
+
+int send_workerapi_group_join_request(struct worker_state *state, struct rgcp_packet *packet)
+{
+    assert(state);
+    assert(packet);
+
+    printf("\tgroup join request\n");
+    // TODO: implement this
+
+    return 0;
+}
+
+int send_workerapi_group_leave_request(struct worker_state *state, struct rgcp_packet *packet)
+{
+    assert(state);
+    assert(packet);
+
+    printf("\tgroup leave request\n");
+    // TODO: implement this
+
+    return 0;
+}
+
 int execute_client_request(struct worker_state *state, struct rgcp_packet *packet)
 {
     assert(state);
     assert(packet);
 
-    // TODO: handle packet here, needs lib to define types first
     switch(packet->type)
     {
+    case RGCP_GROUP_DISCOVER:
+        return send_workerapi_discovery_request(state);
+    case RGCP_CREATE_GROUP:
+        return send_workerapi_group_create_request(state, packet);
+    case RGCP_JOIN_GROUP:
+        return send_workerapi_group_join_request(state, packet);
+    case RGCP_LEAVE_GROUP:
+        return send_workerapi_group_leave_request(state, packet);
     default:
         break;
     }

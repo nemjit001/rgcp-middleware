@@ -4,10 +4,10 @@
 #include "rgcp_workerapi.h"
 #include "rgcp.h"
 
-#define RGCP_MIDDLEWARE_MAX_CLIENT_BACKLOG 5
-
 // FIXME: put this in config file
-#define RGCP_USE_IPV6 0
+#define RGCP_MIDDLEWARE_PORT 8000
+#define RGCP_MIDDLEWARE_USE_IPV6 0
+#define RGCP_MIDDLEWARE_MAX_CLIENT_BACKLOG 5
 #define RGCP_MIDDLEWARE_MAX_CLIENTS 100
 #define RGCP_MIDDLEWARE_MAX_GROUPS 5
 #define RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS ( RGCP_MIDDLEWARE_MAX_CLIENTS / RGCP_MIDDLEWARE_MAX_GROUPS )
@@ -112,6 +112,12 @@ void rgcp_middleware_state_free(struct rgcp_middleware_state *state)
 int create_listen_socket(uint16_t port)
 {
     struct sockaddr_in addr;
+
+    int domain = AF_INET;
+
+    if (RGCP_MIDDLEWARE_USE_IPV6)
+        domain = AF_INET6;
+
     int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
     if (fd < 0)
@@ -121,7 +127,7 @@ int create_listen_socket(uint16_t port)
     }
 
     memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
+    addr.sin_family = domain;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = INADDR_ANY;
 
