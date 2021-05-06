@@ -62,6 +62,44 @@ int client_send(int fd, struct rgcp_packet *packet)
     return packet_size_bytes;
 }
 
+int execute_client_request(struct worker_state *state, struct rgcp_packet *packet)
+{
+    assert(state);
+    assert(packet);
+
+    // TODO: handle packet here, needs lib to define types first
+    switch(packet->type)
+    {
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+int execute_server_request(struct worker_state *state, struct rgcp_workerapi_packet *packet)
+{
+    assert(state);
+    assert(packet);
+
+    switch(packet->type)
+    {
+    case WORKERAPI_GROUP_DISCOVER_RESPONSE:
+        // TODO: forward group data to client
+        break;
+    case WORKERAPI_NEW_GROUP_MEMBER:
+        // TODO: forward new group member to client
+        break;
+    case WORKERAPI_DELETE_GROUP_MEMBER:
+        // TODO: forward delete of member to client
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+}
+
 int handle_client_request(struct worker_state *state)
 {
     assert(state);
@@ -81,12 +119,8 @@ int handle_client_request(struct worker_state *state)
 
     printf("\t[RGCP worker (%d) client packet] type: 0x%x\n", state->serverfd, packet.type);
 
-    // TODO: handle packet here
-    switch(packet.type)
-    {
-    default:
-        break;
-    }
+    if (execute_client_request(state, &packet) < 0)
+        return -1;    
 
     return 0;
 }
@@ -110,21 +144,8 @@ int handle_server_request(struct worker_state *state)
     
     printf("\t[RGCP worker (%d) server packet] type: 0x%x\n", state->serverfd, packet.type);
 
-    // TODO: handle packet here
-    switch(packet.type)
-    {
-    case WORKERAPI_GROUP_DISCOVER_RESPONSE:
-        // TODO: forward group data to client
-        break;
-    case WORKERAPI_NEW_GROUP_MEMBER:
-        // TODO: forward new group member to client
-        break;
-    case WORKERAPI_DELETE_GROUP_MEMBER:
-        // TODO: forward delete of member to client
-        break;
-    default:
-        break;
-    }
+    if (execute_server_request(state, &packet) < 0)
+        return -1;   
 
     return 0;
 }

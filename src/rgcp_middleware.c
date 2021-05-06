@@ -11,6 +11,7 @@
 #define RGCP_MIDDLEWARE_MAX_CLIENTS 100
 #define RGCP_MIDDLEWARE_MAX_GROUPS 5
 #define RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS ( RGCP_MIDDLEWARE_MAX_CLIENTS / RGCP_MIDDLEWARE_MAX_GROUPS )
+#define RGCP_MIDDLEWARE_GROUPNAME_LENGTH 10
 
 struct child
 {
@@ -22,6 +23,8 @@ struct child
 
 struct group
 {
+    char group_name[RGCP_MIDDLEWARE_GROUPNAME_LENGTH];
+    int active;
     int child_count;
     struct child *children[RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS];
 };
@@ -32,7 +35,7 @@ struct rgcp_middleware_state
     int child_count;
     struct child children[RGCP_MIDDLEWARE_MAX_CLIENTS];
 
-    // TODO: actually use this
+    int group_count;
     struct group groups[RGCP_MIDDLEWARE_MAX_GROUPS];
 };
 
@@ -83,6 +86,18 @@ void rgcp_middleware_state_init(struct rgcp_middleware_state *state)
     for (int i = 0; i < RGCP_MIDDLEWARE_MAX_CLIENTS; i++)
     {
         state->children[i].workerfd = -1;
+        state->children[i].peer_addr_len = 0;
+
+        memset(&state->children[i].peer_addr, 0, sizeof(state->children[i].peer_addr));
+    }
+
+    for (int i = 0; i < RGCP_MIDDLEWARE_MAX_GROUPS; i++)
+    {
+        state->groups[i].active = 0;
+        state->groups[i].child_count = 0;
+
+        memset(&state->groups[i].group_name, 0, sizeof(state->groups[i].group_name));
+        memset(&state->groups[i].children, 0, sizeof(state->groups[i].children));
     }
 }
 
@@ -213,12 +228,11 @@ int handle_connection(struct rgcp_middleware_state *state)
 int handle_worker_close(struct rgcp_middleware_state *state, int worker_index)
 {
     assert(state->children[worker_index].workerfd >= 0);
-    printf("Closing");
 
     close(state->children[worker_index].workerfd);
     state->children[worker_index].workerfd = -1;
 
-    memset(&state->children[worker_index].peer_addr, 0, sizeof(struct sockaddr_in));
+    memset(&state->children[worker_index].peer_addr, 0, sizeof(state->children[worker_index].peer_addr));
     state->children[worker_index].peer_addr_len = 0;
 
     state->child_count--;
@@ -226,19 +240,112 @@ int handle_worker_close(struct rgcp_middleware_state *state, int worker_index)
     return 0;
 }
 
+int create_new_group(struct rgcp_middleware_state *state, __attribute__((unused)) struct rgcp_workerapi_packet *packet)
+{
+    if (state->group_count >= RGCP_MIDDLEWARE_MAX_GROUPS)
+    {
+        fprintf(stderr, "[RGCP middleware warning] max groups exceeded, dropping creation request\n");
+        return 0;
+    }
+
+    for (int i = 0; i < RGCP_MIDDLEWARE_MAX_GROUPS; i++)
+    {
+        if (state->groups[i].active == 0)
+        {
+            // inactive group found
+
+            // TODO: set groupname here
+            // state->groups[i].group_name set with memcpy from packet
+            state->groups[i].active = 1;
+            state->groups[i].child_count = 0;
+
+            // zero children just to be sure
+            memset(&state->groups[i].children, 0, sizeof(state->groups[i].children));
+
+            return 0;
+        }
+    }
+
+    fprintf(stderr, "[RGCP middleware error] Critical error: inconsistent group_count and groups, aborting program\n");
+    return -1;
+}
+
+int handle_group_discovery(struct rgcp_middleware_state *state, struct child *worker)
+{
+    assert(state);
+    assert(worker);
+
+    printf("!!group discover NYI!!\n");
+
+    return 0;
+}
+
+int handle_group_join(struct rgcp_middleware_state *state, struct child *worker, __attribute__((unused)) struct rgcp_workerapi_packet *packet)
+{
+    assert(state);
+    assert(worker);
+    assert(packet);
+
+    // add to group list  + notify all other group members that new member has joined
+
+    printf("!!group join NYI!!\n");
+
+    return 0;
+}
+
+int handle_group_leave(struct rgcp_middleware_state *state, struct child *worker, __attribute__((unused)) struct rgcp_workerapi_packet *packet)
+{
+    assert(state);
+    assert(worker);
+    assert(packet);
+
+    // remove from group list  + notify all other group members that member has left
+    // if last to leave, disband group and set group to inactive
+
+    printf("!!group leave NYI!!\n");
+
+    return 0;
+}
+
+int execute_worker_request(struct rgcp_middleware_state *state, int worker_index, struct rgcp_workerapi_packet *packet)
+{
+    assert(state);
+    assert(packet);
+
+    __attribute__((unused)) struct child *worker = &state->children[worker_index];
+
+    switch(packet->type)
+    {
+    case WORKERAPI_GROUP_CREATE:
+        return create_new_group(state, packet);
+    case WORKERAPI_GROUP_DISCOVER:
+        return handle_group_discovery(state, worker);
+    case WORKERAPI_GROUP_JOIN:
+        return handle_group_join(state, worker, packet);
+    case WORKERAPI_GROUP_LEAVE:
+        return handle_group_leave(state, worker, packet);
+    default:
+        printf("[RGCP middleware] received unknown packet of type 0x%x\n", packet->type);
+        break;
+    }
+
+    return 0;
+}
+
 int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
 {
+    assert(state);
+
     struct child *worker = &state->children[worker_index];
     struct rgcp_workerapi_packet packet;
     memset(&packet, 0, sizeof(packet));
 
-    // TODO: use worker api here to read a whole packet and handle accordingly
     int res = workerapi_recv(worker->workerfd, &packet);
 
-    // if worker has died or read has failed, either case return and let handle_children report error
+    // Worker has died or read has failed, either case return and let handle_children report error
     if (res < 0)
     {
-        perror("Read failed");
+        perror("Read from worker failed");
         return -1;
     }
 
@@ -247,25 +354,11 @@ int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
         return handle_worker_close(state, worker_index);
     }
     
+    // FIXME: remove this when handling works
     printf("[RGCP middleware worker packet from (%d)] type: 0x%x\n", worker->workerfd, packet.type);
 
-    switch(packet.type)
-    {
-    case WORKERAPI_GROUP_CREATE:
-        // TODO: create new group
-        break;
-    case WORKERAPI_GROUP_DISCOVER:
-        // TODO: send back group data
-        break;
-    case WORKERAPI_GROUP_JOIN:
-        // TODO: join user to group
-        break;
-    case WORKERAPI_GROUP_LEAVE:
-        // TODO: delete user from group
-        break;
-    default:
-        break;
-    }
+    if (execute_worker_request(state, worker_index, &packet) < 0)
+        return -1;
 
     return 0;
 }
