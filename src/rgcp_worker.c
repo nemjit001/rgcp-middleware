@@ -27,25 +27,48 @@ void worker_state_free(struct worker_state *state)
     close(state->serverfd);
 }
 
-int client_recv(int fd, struct rgcp_packet *packet)
+int client_recv(int fd, struct rgcp_packet **packet)
 {
     assert(fd >= 0);
-    assert(packet);
+    assert(*packet == NULL);
 
-    // FIXME: change 2048 -> max packet size, only know when packet struct fully defined
-    uint8_t buffer[2048];
-    ssize_t packet_size_bytes = recv(fd, buffer, sizeof(buffer), 0);
+    uint8_t size_buffer[sizeof(uint32_t)];
+    int res1 = recv(fd, size_buffer, sizeof(uint32_t), 0);
 
-    // If empty or error remote client has exited or closed socket
-    if (packet_size_bytes < 0)
+    // If error remote client has exited unexpectedly or closed socket incorrectly
+    if (res1 < 0)
         return -1;
 
-    if (packet_size_bytes == 0)
+    // client closed normally
+    if (res1 == 0)
         return 0;
 
-    memcpy(packet, buffer, packet_size_bytes);
+    uint32_t packet_length = 0;
 
-    return packet_size_bytes;
+    for (size_t i = 0; i < sizeof(uint32_t); i++)
+        packet_length += (uint8_t)(size_buffer[i] >> (sizeof(uint8_t) - 1 - i));
+
+    // erronous packet length received, probably due to client crash
+    if (packet_length == 0)
+        return -1;
+
+    uint8_t data_buffer[packet_length - sizeof(uint32_t)];
+    int res2 = recv(fd, data_buffer, packet_length - sizeof(uint32_t), 0);
+
+    // second recv call empty check
+    if (res2 < 0)
+        return -1;
+
+    uint8_t packet_buffer[packet_length];
+
+    // copying over to relevant pointer offsets
+    memcpy(packet_buffer, size_buffer, sizeof(uint32_t));
+    memcpy(packet_buffer + sizeof(uint32_t), data_buffer, packet_length - sizeof(uint32_t));
+
+    *packet = calloc(packet_length, 1);
+    memcpy(*packet, packet_buffer, packet_length);
+
+    return res1 + res2;
 }
 
 int client_send(int fd, struct rgcp_packet *packet)
@@ -53,7 +76,7 @@ int client_send(int fd, struct rgcp_packet *packet)
     assert(fd >= 0);
     assert(packet);
 
-    ssize_t packet_size_bytes = send(fd, (uint8_t *)packet, sizeof(*packet), 0);
+    ssize_t packet_size_bytes = send(fd, (uint8_t *)packet, packet->packet_len, 0);
 
     // If empty or error remote client has exited or closed socket
     if (packet_size_bytes < 0)
@@ -68,6 +91,7 @@ int send_workerapi_discovery_request(struct worker_state *state)
     memset(&packet, 0, sizeof(packet));
 
     packet.type = WORKERAPI_GROUP_DISCOVER;
+    packet.packet_len = sizeof(packet);
 
     return workerapi_send(state->serverfd, &packet);
 }
@@ -132,46 +156,67 @@ int execute_server_request(struct worker_state *state, struct rgcp_workerapi_pac
     assert(state);
     assert(packet);
 
+    int success = 1;
+    int datalen = packet->packet_len - sizeof(packet->type) - sizeof(packet->packet_len);
+
+    struct rgcp_packet *client_packet = calloc(datalen + sizeof(struct rgcp_packet), 1);
+    client_packet->packet_len = datalen + sizeof(struct rgcp_packet);
+    memcpy(client_packet->data, packet->data, datalen);
+
     switch(packet->type)
     {
     case WORKERAPI_GROUP_DISCOVER_RESPONSE:
-        // TODO: forward group data to client
+        client_packet->type = RGCP_GROUP_DISCOVER_RESPONSE;
         break;
     case WORKERAPI_NEW_GROUP_MEMBER:
-        // TODO: forward new group member to client
+        client_packet->type = RGCP_NEW_GROUP_MEMBER;
         break;
     case WORKERAPI_DELETE_GROUP_MEMBER:
-        // TODO: forward delete of member to client
+        client_packet->type = RGCP_DELETE_GROUP_MEMBER;
         break;
     default:
+        client_packet->type = -1;
         break;
     }
 
-    return 0;
+    if (client_send(state->clientfd, client_packet) <= 0)
+        success = 0;
+
+    free(client_packet);
+
+    return success ? 0 : -1;
 }
 
 int handle_client_request(struct worker_state *state)
 {
     assert(state);
 
-    struct rgcp_packet packet;
+    struct rgcp_packet *packet = NULL;
 
     int r = client_recv(state->clientfd, &packet);
 
     if (r < 0)
+    {
+        free(packet);
         return -1;
+    }
 
     if (r == 0)
     {
+        free(packet);
         state->eof = 1;
         return 0;
     }
 
-    printf("\t[RGCP worker (%d) client packet] type: 0x%x\n", state->serverfd, packet.type);
+    printf("\t[RGCP worker (%d) client packet] type: 0x%x\n", state->serverfd, packet->type);
 
-    if (execute_client_request(state, &packet) < 0)
+    if (execute_client_request(state, packet) < 0)
+    {
+        free(packet);
         return -1;    
+    }
 
+    free(packet);
     return 0;
 }
 
@@ -179,24 +224,29 @@ int handle_server_request(struct worker_state *state)
 {
     assert(state);
 
-    struct rgcp_workerapi_packet packet;
-    memset(&packet, 0, sizeof(packet));
+    struct rgcp_workerapi_packet *packet = NULL;
 
     int r = workerapi_recv(state->serverfd, &packet);
+
     if (r < 0)
-        return -1;
+        goto error;
 
     if (r == 0)
     {
         state->eof = 1;
-        return 0;
+        goto success;
     }
     
-    printf("\t[RGCP worker (%d) server packet] type: 0x%x\n", state->serverfd, packet.type);
+    printf("\t[RGCP worker (%d) server packet] type: 0x%x\n", state->serverfd, packet->type);
 
-    if (execute_server_request(state, &packet) < 0)
-        return -1;   
+    if (execute_server_request(state, packet) < 0)
+        goto error;
 
+success:
+    free(packet);
+    return 0;
+error:
+    free(packet);
     return 0;
 }
 
@@ -223,13 +273,17 @@ static int handle_incoming(struct worker_state *state)
     if (FD_ISSET(state->clientfd, &read_fds))
     {
         if (handle_client_request(state) != 0)
+        {
             success = 0;
+        }
     }
 
     if (FD_ISSET(state->serverfd, &read_fds))
     {
         if (handle_server_request(state) != 0)
+        {
             success = 0;
+        }
     }
 
     return success ? 0 : -1;

@@ -25,17 +25,17 @@ struct group
 {
     char group_name[RGCP_MIDDLEWARE_GROUPNAME_LENGTH];
     int active;
-    int child_count;
+    uint32_t child_count;
     struct child *children[RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS];
 };
 
 struct rgcp_middleware_state
 {
     int listenfd;
-    int child_count;
+    uint32_t child_count;
     struct child children[RGCP_MIDDLEWARE_MAX_CLIENTS];
 
-    int group_count;
+    uint32_t group_count;
     struct group groups[RGCP_MIDDLEWARE_MAX_GROUPS];
 };
 
@@ -281,7 +281,58 @@ int handle_group_discovery(struct rgcp_middleware_state *state, struct child *wo
     assert(state);
     assert(worker);
 
-    printf("!!group discover NYI!!\n");
+    int group_index = 0;
+    struct group groups[state->group_count];
+    struct rgcp_group_info rgcp_groups[state->group_count];
+
+    // get all active groups
+    for (int i = 0; i < RGCP_MIDDLEWARE_MAX_GROUPS; i++)
+    {
+        if (state->groups[i].active != 1)
+            continue;
+        
+        groups[group_index] = state->groups[i];
+        group_index++;
+    }
+
+    // convert our representation to rgcp lib representation
+    for (uint32_t i = 0; i < state->group_count; i++)
+    {
+        rgcp_groups[i].name_length = strlen(groups[i].group_name) + 1;  // +1 accounts for null byte
+        rgcp_groups[i].peer_count = groups[i].child_count;
+
+        memcpy(rgcp_groups[i].group_name, groups[i].group_name, rgcp_groups[i].name_length);
+        rgcp_groups[i].peers = calloc(rgcp_groups[i].peer_count, sizeof(struct rgcp_peer_info));
+
+        for (uint32_t j = 0; j < groups[i].child_count; j++)
+        {
+            rgcp_groups[i].peers[j].addr = groups[i].children[j]->peer_addr;
+            rgcp_groups[i].peers[j].addrlen = groups[i].children[j]->peer_addr_len;
+        }
+    }
+
+    struct rgcp_workerapi_packet *packet = calloc(sizeof(struct rgcp_workerapi_packet), 1);
+    uint32_t packet_len = sizeof(packet) + sizeof(state->group_count) + state->group_count * sizeof(struct rgcp_group_info);
+    
+    packet = realloc(packet, packet_len);
+    memset(packet, 0, packet_len);
+
+    packet->type = WORKERAPI_GROUP_DISCOVER_RESPONSE;
+    packet->packet_len = packet_len;
+    
+    memcpy(packet->data, &state->group_count, sizeof(uint32_t));
+
+    for (uint32_t i = 0; i < state->group_count; i++)
+    {
+        // TODO: copy over each group into byte array
+    }
+
+    workerapi_send(worker->workerfd, packet);
+
+    for (uint32_t i = 0; i < state->group_count; i++)
+        free(rgcp_groups[i].peers);
+
+    free(packet);
 
     return 0;
 }
@@ -343,8 +394,7 @@ int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
     assert(state);
 
     struct child *worker = &state->children[worker_index];
-    struct rgcp_workerapi_packet packet;
-    memset(&packet, 0, sizeof(packet));
+    struct rgcp_workerapi_packet *packet = NULL;
 
     int res = workerapi_recv(worker->workerfd, &packet);
 
@@ -352,19 +402,26 @@ int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
     if (res < 0)
     {
         perror("Read from worker failed");
+        free(packet);
         return -1;
     }
 
     if (res == 0)
     {
+        free(packet);
         return handle_worker_close(state, worker_index);
     }
     
     // FIXME: remove this when handling works
-    printf("[RGCP middleware worker packet from (%d)] type: 0x%x\n", worker->workerfd, packet.type);
+    printf("[RGCP middleware worker packet from (%d)] type: 0x%x\n", worker->workerfd, packet->type);
 
-    if (execute_worker_request(state, worker_index, &packet) < 0)
+    if (execute_worker_request(state, worker_index, packet) < 0)
+    {
+        free(packet);
         return -1;
+    }
+
+    free(packet);
 
     return 0;
 }
