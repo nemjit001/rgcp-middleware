@@ -3,7 +3,6 @@
 #include "rgcp_utils.h"
 #include "rgcp_worker.h"
 #include "rgcp_workerapi.h"
-#include "rgcp.h"
 
 struct worker_state
 {
@@ -101,10 +100,21 @@ int send_workerapi_group_create_request(struct worker_state *state, struct rgcp_
     assert(state);
     assert(packet);
 
-    printf("\tgroup creation request\n");
-    // TODO: implement this
+    int datalen = packet->packet_len - sizeof(packet->type) - sizeof(packet->packet_len);
+    int packet_len = datalen + sizeof(struct rgcp_workerapi_packet);
 
-    return 0;
+    struct rgcp_workerapi_packet *worker_packet = calloc(packet_len, 1);
+
+    worker_packet->type = WORKERAPI_GROUP_CREATE;
+    worker_packet->packet_len = packet_len;
+
+    memcpy(worker_packet->data, packet->data, datalen);
+
+    int retval = workerapi_send(state->serverfd, worker_packet);
+
+    free(worker_packet);
+
+    return retval < 0 ? -1 : 0;
 }
 
 int send_workerapi_group_join_request(struct worker_state *state, struct rgcp_packet *packet)
@@ -173,6 +183,15 @@ int execute_server_request(struct worker_state *state, struct rgcp_workerapi_pac
         break;
     case WORKERAPI_DELETE_GROUP_MEMBER:
         client_packet->type = RGCP_DELETE_GROUP_MEMBER;
+        break;
+    case WORKERAPI_GROUP_CREATE_OK:
+        client_packet->type = RGCP_CREATE_GROUP_OK;
+        break;
+    case WORKERAPI_GROUP_CREATE_ERROR_GROUPS:
+        client_packet->type = RGCP_CREATE_GROUP_ERROR_NAME;
+        break;
+    case WORKERAPI_GROUP_CREATE_ERROR_NAME:
+        client_packet->type = RGCP_CREATE_GROUP_ERROR_GROUPS;
         break;
     default:
         client_packet->type = -1;

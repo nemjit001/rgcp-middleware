@@ -20,7 +20,7 @@ int workerapi_recv(int fd, struct rgcp_workerapi_packet **packet)
     assert(*packet == NULL);
 
     uint8_t size_buffer[sizeof(uint32_t)];
-    int res1 = recv(fd, size_buffer, sizeof(uint32_t), 0);
+    int res1 = read(fd, size_buffer, sizeof(uint32_t));
 
     // If error remote client has exited unexpectedly or closed socket incorrectly
     if (res1 < 0)
@@ -40,7 +40,7 @@ int workerapi_recv(int fd, struct rgcp_workerapi_packet **packet)
         return -1;
 
     uint8_t data_buffer[packet_length - sizeof(uint32_t)];
-    int res2 = recv(fd, data_buffer, packet_length - sizeof(uint32_t), 0);
+    int res2 = read(fd, data_buffer, packet_length - sizeof(uint32_t));
 
     // second recv call empty check
     if (res2 < 0)

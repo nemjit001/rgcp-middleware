@@ -17,7 +17,7 @@ add_executable(${TARGET_NAME}
 
 find_package(Threads)
 
-target_compile_options(${TARGET_NAME} PRIVATE -Wall -Wextra -Werror -pedantic)
+target_compile_options(${TARGET_NAME} PRIVATE -Wall -Wextra -Werror -pedantic -g)
 
 target_link_libraries(${TARGET_NAME} ${CMAKE_THREAD_LIBS_INIT})
 target_link_libraries(${TARGET_NAME} dl rgcp)
