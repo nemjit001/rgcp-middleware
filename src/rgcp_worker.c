@@ -84,30 +84,44 @@ int client_send(int fd, struct rgcp_packet *packet)
     return packet_size_bytes;
 }
 
-int send_workerapi_discovery_request(struct worker_state *state)
+int send_workerapi_request_no_data(struct worker_state *state, enum workerapi_req_type type)
 {
     struct rgcp_workerapi_packet packet;
     memset(&packet, 0, sizeof(packet));
 
-    packet.type = WORKERAPI_GROUP_DISCOVER;
+    packet.type = type;
     packet.packet_len = sizeof(packet);
 
     return workerapi_send(state->serverfd, &packet);
 }
 
-int send_workerapi_group_create_request(struct worker_state *state, struct rgcp_packet *packet)
+int send_workerapi_request_with_data(struct worker_state *state, struct rgcp_packet *packet)
 {
     assert(state);
     assert(packet);
 
-    int datalen = packet->packet_len - sizeof(packet->type) - sizeof(packet->packet_len);
+    int datalen = packet->packet_len - sizeof(*packet);
     int packet_len = datalen + sizeof(struct rgcp_workerapi_packet);
 
     struct rgcp_workerapi_packet *worker_packet = calloc(packet_len, 1);
 
-    worker_packet->type = WORKERAPI_GROUP_CREATE;
-    worker_packet->packet_len = packet_len;
+    switch (packet->type)
+    {
+    case RGCP_CREATE_GROUP:
+        worker_packet->type = WORKERAPI_GROUP_CREATE;
+        break;
+    case RGCP_JOIN_GROUP:
+        worker_packet->type = WORKERAPI_GROUP_JOIN;
+        break;
+    case RGCP_LEAVE_GROUP:
+        worker_packet->type = WORKERAPI_GROUP_LEAVE;
+        break;
+    default:
+        free(worker_packet);
+        return -1;
+    }
 
+    worker_packet->packet_len = packet_len;
     memcpy(worker_packet->data, packet->data, datalen);
 
     int retval = workerapi_send(state->serverfd, worker_packet);
@@ -115,28 +129,6 @@ int send_workerapi_group_create_request(struct worker_state *state, struct rgcp_
     free(worker_packet);
 
     return retval < 0 ? -1 : 0;
-}
-
-int send_workerapi_group_join_request(struct worker_state *state, struct rgcp_packet *packet)
-{
-    assert(state);
-    assert(packet);
-
-    printf("\tgroup join request\n");
-    // TODO: implement this
-
-    return 0;
-}
-
-int send_workerapi_group_leave_request(struct worker_state *state, struct rgcp_packet *packet)
-{
-    assert(state);
-    assert(packet);
-
-    printf("\tgroup leave request\n");
-    // TODO: implement this
-
-    return 0;
 }
 
 int execute_client_request(struct worker_state *state, struct rgcp_packet *packet)
@@ -147,13 +139,11 @@ int execute_client_request(struct worker_state *state, struct rgcp_packet *packe
     switch(packet->type)
     {
     case RGCP_GROUP_DISCOVER:
-        return send_workerapi_discovery_request(state);
+        return send_workerapi_request_no_data(state, WORKERAPI_GROUP_DISCOVER);
     case RGCP_CREATE_GROUP:
-        return send_workerapi_group_create_request(state, packet);
     case RGCP_JOIN_GROUP:
-        return send_workerapi_group_join_request(state, packet);
     case RGCP_LEAVE_GROUP:
-        return send_workerapi_group_leave_request(state, packet);
+        return send_workerapi_request_with_data(state, packet);
     default:
         break;
     }
@@ -191,7 +181,19 @@ int execute_server_request(struct worker_state *state, struct rgcp_workerapi_pac
         client_packet->type = RGCP_CREATE_GROUP_ERROR_NAME;
         break;
     case WORKERAPI_GROUP_CREATE_ERROR_NAME:
-        client_packet->type = RGCP_CREATE_GROUP_ERROR_GROUPS;
+        client_packet->type = RGCP_CREATE_GROUP_ERROR_MAX_GROUPS;
+        break;
+    case WORKERAPI_GROUP_JOIN_ERROR_MAX_CLIENTS:
+        client_packet->type = RGCP_JOIN_ERROR_MAX_CLIENTS;
+        break;
+    case WORKERAPI_GROUP_JOIN_ERROR_NO_SUCH_GROUP:
+        client_packet->type = RGCP_JOIN_ERROR_NO_SUCH_GROUP;
+        break;
+    case WORKERAPI_GROUP_JOIN_ERROR_NAME:
+        client_packet->type = RGCP_JOIN_ERROR_NAME;
+        break;
+    case WORKERAPI_GROUP_JOIN_RESPONSE:
+        client_packet->type = RGCP_JOIN_RESPONSE;
         break;
     default:
         client_packet->type = -1;

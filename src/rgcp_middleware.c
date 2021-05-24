@@ -112,6 +112,20 @@ int pack_group_info_packet(struct rgcp_group_info *info, uint8_t *array)
     return offset;
 }
 
+int group_exists(struct rgcp_middleware_state *state, const char *groupname)
+{
+    for (int i = 0; i < RGCP_MIDDLEWARE_MAX_GROUPS; i++)
+    {
+        if (state->groups[i].active != 1)
+            continue;
+        
+        if (strcmp(state->groups[i].group_name, groupname) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
 void close_serverhandles(struct rgcp_middleware_state *state)
 {
     assert(state);
@@ -333,11 +347,18 @@ int create_new_group(struct child *worker, struct rgcp_middleware_state *state, 
         return send_create_group_response(worker, WORKERAPI_GROUP_CREATE_ERROR_GROUPS);
     }
 
-    if (data.group_info.name_length > RGCP_MIDDLEWARE_GROUPNAME_LENGTH)
+    if (data.group_info.name_length > RGCP_MIDDLEWARE_GROUPNAME_LENGTH || data.group_info.name_length == 0)
     {
         rgcp_group_info_free(&data.group_info);
-        fprintf(stderr, "[RGCP middleware warning] max group name length exceeded, dropping creation request\n");
+        fprintf(stderr, "[RGCP middleware warning] group name length is too long or zero, dropping creation request\n");
         return send_create_group_response(worker, WORKERAPI_GROUP_CREATE_ERROR_NAME);
+    }
+
+    if (group_exists(state, data.group_info.group_name) == 1)
+    {
+        rgcp_group_info_free(&data.group_info);
+        fprintf(stderr, "[RGCP middleware warning] group already exists, dropping creation request\n");
+        return send_create_group_response(worker, WORKERAPI_GROUP_CREATE_ERROR_EXISTS);
     }
 
     for (int i = 0; i < RGCP_MIDDLEWARE_MAX_GROUPS; i++)
@@ -401,14 +422,17 @@ int handle_group_discovery(struct rgcp_middleware_state *state, struct child *wo
         memcpy(curr_rgcp_group->group_name, curr_mw_group->group_name, curr_rgcp_group->name_length);
         curr_rgcp_group->peers = calloc(curr_rgcp_group->peer_count, sizeof(struct rgcp_peer_info));
 
-        // int child_index = 0;
+        int child_index = 0;
         for (int j = 0; j < RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS; j++)
         {
             if (curr_mw_group->children[j] == NULL)
                 continue;
             
             printf("%p\n", (void *)curr_mw_group->children[j]);
-            // TODO: set values here
+            
+            struct rgcp_peer_info *peer_info = &curr_rgcp_group->peers[child_index];
+            peer_info->addr = curr_mw_group->children[j]->peer_addr;
+            peer_info->addrlen = curr_mw_group->children[j]->peer_addr_len;
         }
     }
 
@@ -448,7 +472,29 @@ int handle_group_discovery(struct rgcp_middleware_state *state, struct child *wo
     return 0;
 }
 
-int handle_group_join(struct rgcp_middleware_state *state, struct child *worker, __attribute__((unused)) struct rgcp_workerapi_packet *packet)
+int send_join_group_response(struct child *worker, enum workerapi_req_type type)
+{
+    if (
+        type != WORKERAPI_GROUP_JOIN_ERROR_NAME && 
+        type != WORKERAPI_GROUP_JOIN_ERROR_NO_SUCH_GROUP && 
+        type != WORKERAPI_GROUP_JOIN_ERROR_MAX_CLIENTS
+    )
+    {
+        return -1;
+    }
+    
+    struct rgcp_workerapi_packet packet;
+    memset(&packet, 0, sizeof(packet));
+    
+    packet.type = type;
+    packet.packet_len = sizeof(packet);
+
+    int res = workerapi_send(worker->workerfd, &packet);
+
+    return res;
+}
+
+int handle_group_join(struct rgcp_middleware_state *state, struct child *worker, struct rgcp_workerapi_packet *packet)
 {
     assert(state);
     assert(worker);
@@ -456,12 +502,35 @@ int handle_group_join(struct rgcp_middleware_state *state, struct child *worker,
 
     // add to group list  + notify all other group members that new member has joined
 
+    union rgcp_packet_data data;
+    memset(&data, 0, sizeof(data));
+
+    if (unpack_group_info_packet(&data.group_info, packet, 0) < 0)
+    {
+        rgcp_group_info_free(&data.group_info);
+        return -1;
+    }
+
+    if (data.group_info.name_length > RGCP_MIDDLEWARE_GROUPNAME_LENGTH || data.group_info.name_length == 0)
+    {
+        rgcp_group_info_free(&data.group_info);
+        fprintf(stderr, "[RGCP middleware warning] group name length is too long or zero, dropping join request\n");
+        return send_join_group_response(worker, WORKERAPI_GROUP_JOIN_ERROR_NAME);
+    }
+
+    if (group_exists(state, data.group_info.group_name) == 1)
+    {
+        rgcp_group_info_free(&data.group_info);
+        fprintf(stderr, "[RGCP middleware warning] group does not exist, dropping join request\n");
+        return send_join_group_response(worker, WORKERAPI_GROUP_JOIN_ERROR_NO_SUCH_GROUP);
+    }
+
     printf("!!group join NYI!!\n");
 
     return 0;
 }
 
-int handle_group_leave(struct rgcp_middleware_state *state, struct child *worker, __attribute__((unused)) struct rgcp_workerapi_packet *packet)
+int handle_group_leave(struct rgcp_middleware_state *state, struct child *worker, struct rgcp_workerapi_packet *packet)
 {
     assert(state);
     assert(worker);
