@@ -192,6 +192,9 @@ int execute_server_request(struct worker_state *state, struct rgcp_workerapi_pac
     case WORKERAPI_GROUP_JOIN_ERROR_NAME:
         client_packet->type = RGCP_JOIN_ERROR_NAME;
         break;
+    case WORKERAPI_GROUP_JOIN_ERROR_ALREADY_IN_GROUP:
+        client_packet->type = RGCP_JOIN_ERROR_ALREADY_IN_GROUP;
+        break;
     case WORKERAPI_GROUP_JOIN_RESPONSE:
         client_packet->type = RGCP_JOIN_RESPONSE;
         break;
