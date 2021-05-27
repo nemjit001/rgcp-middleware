@@ -5,7 +5,6 @@ int workerapi_send(int fd, struct rgcp_workerapi_packet *packet)
     assert(fd >= 0);
     assert(packet);
 
-    // TODO: check if this OK, depends on packet struct
     ssize_t bytes_sent = write(fd, (uint8_t *)packet, packet->packet_len);
 
     if (bytes_sent <= 0)

@@ -13,6 +13,11 @@
 #define RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS ( RGCP_MIDDLEWARE_MAX_CLIENTS / RGCP_MIDDLEWARE_MAX_GROUPS )
 #define RGCP_MIDDLEWARE_GROUPNAME_LENGTH 20
 
+// TODO: make this actual datatype
+// struct middleware_config {
+
+// }
+
 struct child
 {
     int workerfd;
@@ -83,6 +88,23 @@ void convert_middleware_to_lib_repr(struct group *mw_group, struct rgcp_group_in
         
         child_index++;
     }
+}
+
+int unpack_peer_info_packet(struct rgcp_peer_info *info, struct rgcp_workerapi_packet *packet, uint32_t offset_start)
+{
+    uint32_t data_length = packet->packet_len - sizeof(struct rgcp_workerapi_packet);
+    uint32_t offset = offset_start;
+
+    if (data_length == 0 || data_length < sizeof(struct rgcp_peer_info))
+        return -1;
+
+    memcpy(&info->addr, packet->data + offset, sizeof(struct sockaddr_in));
+    offset += sizeof(struct sockaddr_in);
+
+    memcpy(&info->addrlen, packet->data + offset, sizeof(socklen_t));
+    offset += sizeof(socklen_t);
+
+    return offset;
 }
 
 int unpack_group_info_packet(struct rgcp_group_info *info, struct rgcp_workerapi_packet *packet, uint32_t offset_start)
@@ -441,6 +463,10 @@ void register_child(struct rgcp_middleware_state *state, int workerfd, struct so
             state->child_count++;
             state->children[i].workerfd = workerfd;
             state->children[i].peer_addr = peer_addr;
+
+            // port of remote listen socket is unknown, so zero it
+            state->children[i].peer_addr.sin_port = 0;
+
             state->children[i].peer_addr_len = peer_addr_len;
 
             return;
@@ -515,7 +541,6 @@ int handle_worker_close(struct rgcp_middleware_state *state, int worker_index)
 {
     assert(state->children[worker_index].workerfd >= 0);
 
-    // TODO: notify groups that worker has closed and client has left
     for (uint32_t i = 0; i < RGCP_MIDDLEWARE_MAX_GROUPS; i++)
     {
         if (state->groups[i].active == 0)
@@ -541,7 +566,7 @@ int handle_worker_close(struct rgcp_middleware_state *state, int worker_index)
 
 int send_create_group_response(struct child *worker, enum workerapi_req_type type)
 {
-    if (type != WORKERAPI_GROUP_CREATE_OK && type != WORKERAPI_GROUP_CREATE_ERROR_NAME && type != WORKERAPI_GROUP_CREATE_ERROR_GROUPS)
+    if (type != WORKERAPI_GROUP_CREATE_OK && type != WORKERAPI_GROUP_CREATE_ERROR_NAME && type != WORKERAPI_GROUP_CREATE_ERROR_GROUPS && type != WORKERAPI_GROUP_CREATE_ERROR_EXISTS)
         return -1;
     
     struct rgcp_workerapi_packet packet;
@@ -635,6 +660,9 @@ int handle_group_discovery(struct rgcp_middleware_state *state, struct child *wo
         group_index++;
     }
 
+
+    uint32_t packet_len = sizeof(struct rgcp_workerapi_packet) + sizeof(state->group_count);
+
     // convert our representation to rgcp lib representation
     for (uint32_t i = 0; i < state->group_count; i++)
     {
@@ -642,12 +670,15 @@ int handle_group_discovery(struct rgcp_middleware_state *state, struct child *wo
         struct rgcp_group_info *curr_rgcp_group = &rgcp_groups[i];
 
         convert_middleware_to_lib_repr(curr_mw_group, curr_rgcp_group);
-    }
 
-    struct rgcp_workerapi_packet *packet = calloc(sizeof(struct rgcp_workerapi_packet), 1);
-    uint32_t packet_len = sizeof(packet) + sizeof(state->group_count) + state->group_count * sizeof(struct rgcp_group_info);
+        packet_len +=
+            sizeof(curr_rgcp_group->name_length) +
+            sizeof(curr_rgcp_group->peer_count) +
+            curr_rgcp_group->name_length * sizeof(char) +
+            curr_rgcp_group->peer_count * sizeof(struct rgcp_peer_info);
+    }
     
-    packet = realloc(packet, packet_len);
+    struct rgcp_workerapi_packet *packet = calloc(packet_len, 1);
     memset(packet, 0, packet_len);
     packet->type = WORKERAPI_GROUP_DISCOVER_RESPONSE;
     packet->packet_len = packet_len;
@@ -714,19 +745,23 @@ int send_join_group_response(struct child *worker, enum workerapi_req_type type)
 
 int notify_client_join_ok(struct child *worker, struct group *mw_group)
 {
-    struct rgcp_workerapi_packet *out_packet = calloc(sizeof(struct rgcp_workerapi_packet), 1);
-    uint32_t packet_len = sizeof(*out_packet) + sizeof(struct rgcp_group_info);
-
-    out_packet = realloc(out_packet, packet_len);
-    memset(out_packet, 0, packet_len);
-
-    out_packet->type = WORKERAPI_GROUP_JOIN_RESPONSE;
-    out_packet->packet_len = packet_len;
-
     struct rgcp_group_info out_group_info;
 
     rgcp_group_info_init(&out_group_info);
     convert_middleware_to_lib_repr(mw_group, &out_group_info);
+
+    uint32_t packet_len =
+        sizeof(struct rgcp_workerapi_packet) +
+        sizeof(out_group_info.name_length) +
+        sizeof(out_group_info.peer_count) +
+        out_group_info.name_length * sizeof(char) +
+        out_group_info.peer_count * sizeof(struct rgcp_peer_info);
+
+    struct rgcp_workerapi_packet *out_packet = calloc(packet_len, 1);
+    memset(out_packet, 0, packet_len);
+
+    out_packet->type = WORKERAPI_GROUP_JOIN_RESPONSE;
+    out_packet->packet_len = packet_len;
 
     if (pack_group_info_packet(&out_group_info, out_packet->data) < 0)
     {
@@ -850,8 +885,6 @@ int handle_group_leave(struct rgcp_middleware_state *state, struct child *worker
     // remove from group list  + notify all other group members that member has left
     // if last to leave, disband group and set group to inactive
 
-    // TODO: implement this
-
     union rgcp_packet_data data;
     memset(&data, 0, sizeof(data));
 
@@ -868,6 +901,26 @@ int handle_group_leave(struct rgcp_middleware_state *state, struct child *worker
     return 0;
 }
 
+int set_addr_info_for_worker(struct rgcp_middleware_state *state, int worker_index, struct rgcp_workerapi_packet *packet)
+{
+    assert(worker_index >= 0);
+    assert(state);
+    assert(packet);
+
+    struct rgcp_peer_info peer_info;
+    memset(&peer_info, 0, sizeof(peer_info));
+
+    struct child *worker = &state->children[worker_index];
+
+    if (unpack_peer_info_packet(&peer_info, packet, 0) < 0)
+        return -1;
+
+    // only need new port
+    worker->peer_addr.sin_port = peer_info.addr.sin_port;
+
+    return 0;
+}
+
 int execute_worker_request(struct rgcp_middleware_state *state, int worker_index, struct rgcp_workerapi_packet *packet)
 {
     assert(state);
@@ -877,6 +930,8 @@ int execute_worker_request(struct rgcp_middleware_state *state, int worker_index
 
     switch(packet->type)
     {
+    case WORKERAPI_ADDR_INFO_SHARE:
+        return set_addr_info_for_worker(state, worker_index, packet);
     case WORKERAPI_GROUP_CREATE:
         return create_new_group(worker, state, packet);
     case WORKERAPI_GROUP_DISCOVER:

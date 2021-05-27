@@ -107,6 +107,9 @@ int send_workerapi_request_with_data(struct worker_state *state, struct rgcp_pac
 
     switch (packet->type)
     {
+    case RGCP_ADDRINFO_SHARE:
+        worker_packet->type = WORKERAPI_ADDR_INFO_SHARE;
+        break;
     case RGCP_CREATE_GROUP:
         worker_packet->type = WORKERAPI_GROUP_CREATE;
         break;
@@ -140,6 +143,7 @@ int execute_client_request(struct worker_state *state, struct rgcp_packet *packe
     {
     case RGCP_GROUP_DISCOVER:
         return send_workerapi_request_no_data(state, WORKERAPI_GROUP_DISCOVER);
+    case RGCP_ADDRINFO_SHARE:
     case RGCP_CREATE_GROUP:
     case RGCP_JOIN_GROUP:
     case RGCP_LEAVE_GROUP:
@@ -182,6 +186,9 @@ int execute_server_request(struct worker_state *state, struct rgcp_workerapi_pac
         break;
     case WORKERAPI_GROUP_CREATE_ERROR_NAME:
         client_packet->type = RGCP_CREATE_GROUP_ERROR_MAX_GROUPS;
+        break;
+    case WORKERAPI_GROUP_CREATE_ERROR_EXISTS:
+        client_packet->type = RGCP_CREATE_GROUP_ERROR_ALREADY_EXISTS;
         break;
     case WORKERAPI_GROUP_JOIN_ERROR_MAX_CLIENTS:
         client_packet->type = RGCP_JOIN_ERROR_MAX_CLIENTS;
