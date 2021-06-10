@@ -42,10 +42,7 @@ int client_recv(int fd, struct rgcp_packet **packet)
     if (res1 == 0)
         return 0;
 
-    uint32_t packet_length = 0;
-
-    for (size_t i = 0; i < sizeof(uint32_t); i++)
-        packet_length += (uint8_t)(size_buffer[i] >> (sizeof(uint8_t) - 1 - i));
+    uint32_t packet_length = *((uint32_t *)size_buffer);
 
     // erronous packet length received, probably due to client crash
     if (packet_length == 0)
@@ -65,6 +62,13 @@ int client_recv(int fd, struct rgcp_packet **packet)
     memcpy(packet_buffer + sizeof(uint32_t), data_buffer, packet_length - sizeof(uint32_t));
 
     *packet = calloc(packet_length, 1);
+
+    if (packet == NULL)
+    {
+        perror("Calloc of packet in client recv has failed");
+        return -1;
+    }
+
     memcpy(*packet, packet_buffer, packet_length);
 
     return res1 + res2;
@@ -104,6 +108,12 @@ int send_workerapi_request_with_data(struct worker_state *state, struct rgcp_pac
     int packet_len = datalen + sizeof(struct rgcp_workerapi_packet);
 
     struct rgcp_workerapi_packet *worker_packet = calloc(packet_len, 1);
+
+    if (packet == NULL)
+    {
+        perror("Calloc of packet in \"send workerapi request with data\" has failed");
+        return -1;
+    }
 
     switch (packet->type)
     {
@@ -161,9 +171,17 @@ int execute_server_request(struct worker_state *state, struct rgcp_workerapi_pac
     assert(packet);
 
     int success = 1;
-    int datalen = packet->packet_len - sizeof(packet->type) - sizeof(packet->packet_len);
+    uint32_t datalen = packet->packet_len - sizeof(struct rgcp_workerapi_packet);
 
     struct rgcp_packet *client_packet = calloc(datalen + sizeof(struct rgcp_packet), 1);
+
+    if (packet == NULL)
+    {
+        perror("Calloc of packet in execute server request has failed");
+        return -1;
+    }
+
+    memset(client_packet, 0, sizeof(struct rgcp_packet) + datalen);
     client_packet->packet_len = datalen + sizeof(struct rgcp_packet);
     memcpy(client_packet->data, packet->data, datalen);
 
@@ -181,11 +199,11 @@ int execute_server_request(struct worker_state *state, struct rgcp_workerapi_pac
     case WORKERAPI_GROUP_CREATE_OK:
         client_packet->type = RGCP_CREATE_GROUP_OK;
         break;
-    case WORKERAPI_GROUP_CREATE_ERROR_GROUPS:
-        client_packet->type = RGCP_CREATE_GROUP_ERROR_NAME;
+    case WORKERAPI_GROUP_CREATE_ERROR_MAX_GROUPS:
+        client_packet->type = RGCP_CREATE_GROUP_ERROR_MAX_GROUPS;
         break;
     case WORKERAPI_GROUP_CREATE_ERROR_NAME:
-        client_packet->type = RGCP_CREATE_GROUP_ERROR_MAX_GROUPS;
+        client_packet->type = RGCP_CREATE_GROUP_ERROR_NAME;
         break;
     case WORKERAPI_GROUP_CREATE_ERROR_EXISTS:
         client_packet->type = RGCP_CREATE_GROUP_ERROR_ALREADY_EXISTS;
@@ -239,7 +257,7 @@ int handle_client_request(struct worker_state *state)
         return 0;
     }
 
-    printf("\t[RGCP worker (%d) client packet] type: 0x%x\n", state->serverfd, packet->type);
+    // printf("\t[RGCP worker (%d) client packet] type: 0x%x\n", state->serverfd, packet->type);
 
     if (execute_client_request(state, packet) < 0)
     {
@@ -268,7 +286,7 @@ int handle_server_request(struct worker_state *state)
         goto success;
     }
     
-    printf("\t[RGCP worker (%d) server packet] type: 0x%x\n", state->serverfd, packet->type);
+    // printf("\t[RGCP worker (%d) server packet] type: 0x%x\n", state->serverfd, packet->type);
 
     if (execute_server_request(state, packet) < 0)
         goto error;

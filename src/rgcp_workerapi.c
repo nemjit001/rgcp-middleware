@@ -29,10 +29,7 @@ int workerapi_recv(int fd, struct rgcp_workerapi_packet **packet)
     if (res1 == 0)
         return 0;
 
-    uint32_t packet_length = 0;
-
-    for (size_t i = 0; i < sizeof(uint32_t); i++)
-        packet_length += (uint8_t)(size_buffer[i] >> (sizeof(uint8_t) - 1 - i));
+    uint32_t packet_length = *((uint32_t *)size_buffer);
 
     // erronous packet length received, probably due to client crash
     if (packet_length == 0)
@@ -52,6 +49,13 @@ int workerapi_recv(int fd, struct rgcp_workerapi_packet **packet)
     memcpy(packet_buffer + sizeof(uint32_t), data_buffer, packet_length - sizeof(uint32_t));
 
     *packet = calloc(packet_length, 1);
+
+    if (packet == NULL)
+    {
+        perror("Calloc of packet in workerapi recv has failed");
+        return -1;
+    }
+
     memcpy(*packet, packet_buffer, packet_length);
 
     return res1 + res2;

@@ -8,15 +8,10 @@
 #define RGCP_MIDDLEWARE_PORT 8000
 #define RGCP_MIDDLEWARE_USE_IPV6 0
 #define RGCP_MIDDLEWARE_MAX_CLIENT_BACKLOG 5
-#define RGCP_MIDDLEWARE_MAX_CLIENTS 100
+#define RGCP_MIDDLEWARE_MAX_CLIENTS 2000
 #define RGCP_MIDDLEWARE_MAX_GROUPS 5
 #define RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS ( RGCP_MIDDLEWARE_MAX_CLIENTS / RGCP_MIDDLEWARE_MAX_GROUPS )
 #define RGCP_MIDDLEWARE_GROUPNAME_LENGTH 20
-
-// TODO: make this actual datatype
-// struct middleware_config {
-
-// }
 
 struct child
 {
@@ -64,7 +59,7 @@ static void register_signals(void)
     sigaction(SIGPIPE, &sa, NULL);
 }
 
-void convert_middleware_to_lib_repr(struct group *mw_group, struct rgcp_group_info *rgcp_group)
+int convert_middleware_to_lib_repr(struct group *mw_group, struct rgcp_group_info *rgcp_group)
 {
     assert(mw_group);
     assert(rgcp_group);
@@ -73,8 +68,21 @@ void convert_middleware_to_lib_repr(struct group *mw_group, struct rgcp_group_in
     rgcp_group->peer_count = mw_group->child_count;
 
     rgcp_group->group_name = calloc(rgcp_group->name_length, sizeof(char));
+
+    if (rgcp_group->group_name == NULL)
+    {
+        perror("Calloc of group name in mw to lib convert has failed");
+        return -1;
+    }
+
     memcpy(rgcp_group->group_name, mw_group->group_name, rgcp_group->name_length);
     rgcp_group->peers = calloc(rgcp_group->peer_count, sizeof(struct rgcp_peer_info));
+
+    if (rgcp_group->peers == NULL)
+    {
+        perror("Calloc of peers in mw to lib convert has failed");
+        return -1;
+    }
 
     int child_index = 0;
     for (int j = 0; j < RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS; j++)
@@ -88,6 +96,8 @@ void convert_middleware_to_lib_repr(struct group *mw_group, struct rgcp_group_in
         
         child_index++;
     }
+
+    return 0;
 }
 
 int unpack_peer_info_packet(struct rgcp_peer_info *info, struct rgcp_workerapi_packet *packet, uint32_t offset_start)
@@ -128,6 +138,13 @@ int unpack_group_info_packet(struct rgcp_group_info *info, struct rgcp_workerapi
         return -1;
 
     info->group_name = calloc(info->name_length, sizeof(char));
+
+    if (info->group_name == NULL)
+    {
+        perror("Calloc of group name in unpack group info has failed");
+        return -1;
+    }
+
     memcpy(info->group_name, packet->data + offset, info->name_length * sizeof(char));
 
     offset += info->name_length * sizeof(char);
@@ -142,6 +159,13 @@ int unpack_group_info_packet(struct rgcp_group_info *info, struct rgcp_workerapi
         return -1;
 
     info->peers = calloc(info->peer_count, sizeof(struct rgcp_peer_info));
+
+    if (info->peers == NULL)
+    {
+        perror("Calloc of peers in unpack group info has failed");
+        return -1;
+    }
+
     memcpy(info->peers, packet->data + offset, info->peer_count * sizeof(struct rgcp_peer_info));
     offset += info->peer_count * sizeof(struct rgcp_peer_info);
 
@@ -215,6 +239,13 @@ int broadcast_client_join(struct child *worker, struct group *mw_group)
 
         uint32_t packet_len = sizeof(struct rgcp_workerapi_packet) + sizeof(struct rgcp_peer_info);
         struct rgcp_workerapi_packet *packet = calloc(packet_len, 1);
+
+        if (packet == NULL)
+        {
+            perror("Calloc of packet in broadcast join has failed");
+            return -1;
+        }
+
         memset(packet, 0, packet_len);
 
         packet->packet_len = packet_len;
@@ -256,6 +287,13 @@ int broadcast_client_leave(struct child *worker, struct group *mw_group)
 
         uint32_t packet_len = sizeof(struct rgcp_workerapi_packet) + sizeof(struct rgcp_peer_info);
         struct rgcp_workerapi_packet *packet = calloc(packet_len, 1);
+
+        if (packet == NULL)
+        {
+            perror("Calloc of packet in broadcast leave has failed");
+            return -1;
+        }
+
         memset(packet, 0, packet_len);
 
         packet->packet_len = packet_len;
@@ -269,8 +307,9 @@ int broadcast_client_leave(struct child *worker, struct group *mw_group)
 
         if (workerapi_send(mw_group->children[i]->workerfd, packet) < 0)
         {
+            // worker is already closed, cleaned up in next iteration
             free(packet);
-            return -1;
+            continue;
         }
 
         free(packet);
@@ -295,6 +334,15 @@ int is_worker_in_group(struct child *worker, struct group *mw_group)
     return 0;
 }
 
+void delete_group(struct rgcp_middleware_state *state, struct group *mw_group)
+{
+    mw_group->active = 0;
+    memset(mw_group->group_name, 0, sizeof(mw_group->group_name));
+    memset(mw_group->children, 0, sizeof(mw_group->children));
+
+    state->group_count--;
+}
+
 int remove_worker_from_group(struct rgcp_middleware_state *state, struct child *worker, struct group *mw_group)
 {
     assert(state);
@@ -302,7 +350,9 @@ int remove_worker_from_group(struct rgcp_middleware_state *state, struct child *
     assert(mw_group);
 
     if (is_worker_in_group(worker, mw_group) == 0)
+    {
         return -1;
+    }
 
     int is_deleted = 0;
 
@@ -325,20 +375,13 @@ int remove_worker_from_group(struct rgcp_middleware_state *state, struct child *
     }
 
     if (is_deleted == 0)
+    {
         return -1;
+    }
 
     if (broadcast_client_leave(worker, mw_group) < 0)
-        return -1;
-
-    // delete group if no more clients
-    if (mw_group->child_count == 0)
     {
-        printf("[RGCP middleware] Deleted group (%s) due to no active clients\n", mw_group->group_name);
-        mw_group->active = 0;
-        memset(mw_group->group_name, 0, sizeof(mw_group->group_name));
-        memset(mw_group->children, 0, sizeof(mw_group->children));
-
-        state->group_count--;
+        return -1;
     }
 
     return 0;
@@ -566,7 +609,7 @@ int handle_worker_close(struct rgcp_middleware_state *state, int worker_index)
 
 int send_create_group_response(struct child *worker, enum workerapi_req_type type)
 {
-    if (type != WORKERAPI_GROUP_CREATE_OK && type != WORKERAPI_GROUP_CREATE_ERROR_NAME && type != WORKERAPI_GROUP_CREATE_ERROR_GROUPS && type != WORKERAPI_GROUP_CREATE_ERROR_EXISTS)
+    if (type != WORKERAPI_GROUP_CREATE_OK && type != WORKERAPI_GROUP_CREATE_ERROR_NAME && type != WORKERAPI_GROUP_CREATE_ERROR_MAX_GROUPS && type != WORKERAPI_GROUP_CREATE_ERROR_EXISTS)
         return -1;
     
     struct rgcp_workerapi_packet packet;
@@ -595,20 +638,20 @@ int create_new_group(struct child *worker, struct rgcp_middleware_state *state, 
     {
         rgcp_group_info_free(&data.group_info);
         fprintf(stderr, "[RGCP middleware warning] max groups exceeded, dropping creation request\n");
-        return send_create_group_response(worker, WORKERAPI_GROUP_CREATE_ERROR_GROUPS);
+        return send_create_group_response(worker, WORKERAPI_GROUP_CREATE_ERROR_MAX_GROUPS);
     }
 
-    if (data.group_info.name_length > RGCP_MIDDLEWARE_GROUPNAME_LENGTH || data.group_info.name_length == 0)
+    if (data.group_info.name_length > RGCP_MIDDLEWARE_GROUPNAME_LENGTH || data.group_info.name_length == 0 || strlen(data.group_info.group_name) + 1 != data.group_info.name_length)
     {
         rgcp_group_info_free(&data.group_info);
-        fprintf(stderr, "[RGCP middleware warning] group name length is too long or zero, dropping creation request\n");
+        fprintf(stderr, "[RGCP middleware warning] group name length is too long, not equal to name parameter, or zero, dropping creation request\n");
         return send_create_group_response(worker, WORKERAPI_GROUP_CREATE_ERROR_NAME);
     }
 
     if (group_exists(state, data.group_info.group_name) == 1)
     {
+        fprintf(stderr, "[RGCP middleware warning] group (%s) already exists, dropping creation request\n", data.group_info.group_name);
         rgcp_group_info_free(&data.group_info);
-        fprintf(stderr, "[RGCP middleware warning] group already exists, dropping creation request\n");
         return send_create_group_response(worker, WORKERAPI_GROUP_CREATE_ERROR_EXISTS);
     }
 
@@ -669,7 +712,8 @@ int handle_group_discovery(struct rgcp_middleware_state *state, struct child *wo
         struct group *curr_mw_group = &mw_groups[i];
         struct rgcp_group_info *curr_rgcp_group = &rgcp_groups[i];
 
-        convert_middleware_to_lib_repr(curr_mw_group, curr_rgcp_group);
+        if (convert_middleware_to_lib_repr(curr_mw_group, curr_rgcp_group) < 0)
+            return -1;
 
         packet_len +=
             sizeof(curr_rgcp_group->name_length) +
@@ -679,6 +723,13 @@ int handle_group_discovery(struct rgcp_middleware_state *state, struct child *wo
     }
     
     struct rgcp_workerapi_packet *packet = calloc(packet_len, 1);
+
+    if (packet == NULL)
+    {
+        perror("Calloc of packet failed");
+        return -1;
+    }
+
     memset(packet, 0, packet_len);
     packet->type = WORKERAPI_GROUP_DISCOVER_RESPONSE;
     packet->packet_len = packet_len;
@@ -748,7 +799,8 @@ int notify_client_join_ok(struct child *worker, struct group *mw_group)
     struct rgcp_group_info out_group_info;
 
     rgcp_group_info_init(&out_group_info);
-    convert_middleware_to_lib_repr(mw_group, &out_group_info);
+    if (convert_middleware_to_lib_repr(mw_group, &out_group_info) < 0)
+        return -1;
 
     uint32_t packet_len =
         sizeof(struct rgcp_workerapi_packet) +
@@ -758,6 +810,14 @@ int notify_client_join_ok(struct child *worker, struct group *mw_group)
         out_group_info.peer_count * sizeof(struct rgcp_peer_info);
 
     struct rgcp_workerapi_packet *out_packet = calloc(packet_len, 1);
+
+    if (out_packet == NULL)
+    {
+        perror("Calloc of packet in notify join OK has failed");
+        rgcp_group_info_free(&out_group_info);
+        return -1;
+    }
+
     memset(out_packet, 0, packet_len);
 
     out_packet->type = WORKERAPI_GROUP_JOIN_RESPONSE;
@@ -824,7 +884,7 @@ int handle_group_join(struct rgcp_middleware_state *state, struct child *worker,
         return -1;
     }
 
-    if (curr_group->child_count > RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS)
+    if (curr_group->child_count >= RGCP_MIDDLEWARE_MAX_GROUP_MEMBERS)
     {
         rgcp_group_info_free(&data.group_info);
         fprintf(stderr, "[RGCP middleware warning] max group members exceeded, dropping join request\n");
@@ -882,7 +942,7 @@ int handle_group_leave(struct rgcp_middleware_state *state, struct child *worker
     assert(worker);
     assert(packet);
 
-    // remove from group list  + notify all other group members that member has left
+    // remove from group list + notify all other group members that member has left
     // if last to leave, disband group and set group to inactive
 
     union rgcp_packet_data data;
@@ -895,8 +955,11 @@ int handle_group_leave(struct rgcp_middleware_state *state, struct child *worker
     }
 
     struct group *mw_group = get_group_by_name(state, data.group_info.group_name);
+    
     if (remove_worker_from_group(state, worker, mw_group) < 0)
-        return 0;
+        fprintf(stderr, "[RGCP middleware warning] Worker was already removed from group\n");
+
+    rgcp_group_info_free(&data.group_info);
 
     return 0;
 }
@@ -962,7 +1025,7 @@ int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
     {
         perror("Read from worker failed");
         free(packet);
-        return -1;
+        return 0;
     }
 
     if (res == 0)
@@ -972,7 +1035,7 @@ int handle_worker_request(struct rgcp_middleware_state *state, int worker_index)
     }
     
     // FIXME: remove this when handling works
-    printf("[RGCP middleware worker packet from (%d)] type: 0x%x\n", worker->workerfd, packet->type);
+    // printf("[RGCP middleware worker packet from (%d)] type: 0x%x\n", worker->workerfd, packet->type);
 
     if (execute_worker_request(state, worker_index, packet) < 0)
     {
@@ -1009,7 +1072,12 @@ int handle_incoming(struct rgcp_middleware_state *state)
         max_fd = max(max_fd, fd);
     }
 
-    if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0)
+    struct timeval timeout;
+
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+
+    if (select(max_fd + 1, &read_fds, NULL, NULL, &timeout) < 0)
     {
         // EINTR happens when a worker exits and is reset in the children array
         if (errno == EINTR)
@@ -1022,7 +1090,9 @@ int handle_incoming(struct rgcp_middleware_state *state)
     if (FD_ISSET(state->listenfd, &read_fds))
     {
         if (handle_connection(state) < 0)
+        {
             success = 0;
+        }
     }
     
     for (int i = 0; i < RGCP_MIDDLEWARE_MAX_CLIENTS; i++)
@@ -1035,11 +1105,30 @@ int handle_incoming(struct rgcp_middleware_state *state)
         if (FD_ISSET(fd, &read_fds))
         {
             if (handle_worker_request(state, i) < 0)
+            {
                 success = 0;
+            }
         }
     }
 
     return success ? 0 : -1;
+}
+
+void check_groups(struct rgcp_middleware_state *state)
+{
+    assert(state);
+
+    for (uint32_t i = 0; i < RGCP_MIDDLEWARE_MAX_GROUPS; i++)
+    {
+        if (state->groups[i].active == 0)
+            continue;
+
+        if (state->groups[i].child_count == 0)
+        {
+            printf("[RGCP middleware] Deleted group (%s) due to no active clients\n", state->groups[i].group_name);
+            delete_group(state, &state->groups[i]);
+        }
+    }
 }
 
 void check_children(struct rgcp_middleware_state *state)
@@ -1082,6 +1171,9 @@ void check_children(struct rgcp_middleware_state *state)
             // exited through natural causes
             printf("[RGCP middleware] child exited\n");
         }
+        
+        // check if any groups have no more active clients after child leave
+        check_groups(state);
     }
 }
 
