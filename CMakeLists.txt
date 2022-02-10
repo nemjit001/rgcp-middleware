@@ -10,9 +10,10 @@ set(PROJECT_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src)
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_SOURCE_DIR}/bin)
 
 add_executable(${TARGET_NAME}
-    src/rgcp_workerapi.c
-    src/rgcp_worker.c
-    src/rgcp_middleware.c
+    src/details/api_packet.c
+    src/details/rgcp_group.c
+    src/client.c
+    src/middleware.c
 )
 
 find_package(Threads)
@@ -20,7 +21,7 @@ find_package(Threads)
 target_compile_options(${TARGET_NAME} PRIVATE -Wall -Wextra -Werror -pedantic -g)
 
 target_link_libraries(${TARGET_NAME} ${CMAKE_THREAD_LIBS_INIT})
-target_link_libraries(${TARGET_NAME} dl rgcp)
+target_link_libraries(${TARGET_NAME} dl pthread rgcp)
 
 set_target_properties(${TARGET_NAME} PROPERTIES
     VERSION ${PROJECT_VERSION}
