@@ -1,6 +1,7 @@
 #ifndef LINKED_LIST
 #define LINKED_LIST
 
+#include <assert.h>
 #include <stddef.h>
 
 struct list_entry
@@ -12,8 +13,9 @@ struct list_entry
 
 static inline void list_init(struct list_entry* pHead)
 {
-    pHead->m_pPrev = pHead;
-    pHead->m_pNext = pHead;
+    assert(pHead);
+
+    pHead->m_pPrev = pHead->m_pNext = pHead;
 }
 
 static inline void list_add_front(struct list_entry *pNew, struct list_entry *pHead)
@@ -46,10 +48,10 @@ static inline int list_empty(struct list_entry* pHead)
     return (pHead->m_pNext == pHead);
 }
 
-#define LIST_ENTRY(ptr, type, member) ((type*)(((uint8_t*)ptr) - offsetof(type, member)))
+#define LIST_ENTRY(ptr, type, member) ((type*)((uint8_t*)(ptr) - offsetof(type, member)))
 
-#define LIST_FIRST_ENTRY(pHead, type, member) LIST_ENTRY(pHead->m_pNext, type, member)
+#define LIST_FIRST_ENTRY(ptr, type, member) LIST_ENTRY(ptr->m_pNext, type, member)
 
-#define LIST_FOR_EACH(pCurrent, pNext, pHead) for (pCurrent = pHead->m_pNext, pNext = pCurrent->m_pNext; pCurrent != (pHead); pCurrent = pNext, pNext = pCurrent->m_pNext)
+#define LIST_FOR_EACH(pCurrent, pNext, pHead) for (pCurrent = (pHead)->m_pNext, pNext = pCurrent->m_pNext; pCurrent != (pHead); pCurrent = pNext, pNext = pCurrent->m_pNext)
 
 #endif
