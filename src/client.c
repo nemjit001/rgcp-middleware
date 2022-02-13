@@ -7,10 +7,14 @@
 #include <errno.h>
 
 #include "details/logger.h"
+#include "details/api_packet.h"
+
+#include <rgcp_api.h>
 
 int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remoteFd)
 {
     assert(pClient);
+    pClient->m_lastHeartbeatTimestamp = time(NULL);
     pClient->m_threadHandle = 0;
     pClient->m_shutdownFlag = 0;
     pClient->m_remoteFd = remoteFd;
@@ -35,10 +39,68 @@ void client_free(struct client client)
     close(client.m_remoteFd);
 }
 
-int client_handle_remote_request(__attribute__((unused)) struct client* pClient)
+int client_handle_remote_message(__attribute__((unused)) struct client* pClient)
 {
-    //
+    struct rgcp_packet* pPacket;
 
+    if (rgcp_api_recv(pClient->m_remoteFd, &pPacket) < 0)
+        return -1;
+
+    log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Received Remote Packet (%d, %d, %u)\n", pClient->m_remoteFd, pPacket->m_packetType, pPacket->m_packetError, pPacket->m_dataLen);
+
+    rgcp_packet_free(pPacket);
+    return 0;
+
+// error:
+//     rgcp_packet_free(pPacket);
+//     return -1;
+}
+
+int client_handle_main_thread_message(struct client* pClient)
+{
+    struct api_packet* pPacket;
+
+    if (api_packet_recv(pClient->m_communicationSockets.m_mainThreadSocket, &pPacket) < 0)
+        return -1;
+
+    log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Received Main Thread Packet (%d, %d, %u)\n", pClient->m_remoteFd, pPacket->m_packetType, pPacket->m_errorType, pPacket->m_dataLen);
+
+    switch (pPacket->m_packetType)
+    {
+    case API_HEARTBEAT_NOTIFY:
+        // should not receive heartbeat notify from main thread, something went wrong
+        goto error;
+    case API_GROUP_DISCOVERY:
+        // response to group discovery, send to remote
+        break;
+    case API_GROUP_JOIN:
+        // response to group join, send to remote
+        break;
+    case API_GROUP_LEAVE:
+        // response to group leave, send to remote
+        break;
+    case API_GROUP_CREATE:
+        // response to group creation, send to remote
+        break;
+    case API_PEER_SHARE:
+        // new member, send to remote
+        break;
+    case API_GROUP_SHARE:
+        // group info, send to remote
+        break;
+    case API_DISCONNECT:
+        // group member disconnect, send to remote
+        break;
+    default:
+        log_msg(LOG_LEVEL_ERROR, "[Client][%d] Received Main Thread Packet with Invalid Type: %d\n", pClient->m_remoteFd);
+        goto error;
+    }
+
+    api_packet_free(pPacket);
+    return 0;
+
+error:
+    api_packet_free(pPacket);
     return -1;
 }
 
@@ -51,16 +113,32 @@ int client_handle_incoming(struct client* pClient)
     remote.events = POLLIN;
     remote.revents = 0;
 
-    if (poll(&remote, 1, 0) < 0)
+    struct pollfd mainThread;
+    mainThread.fd = pClient->m_communicationSockets.m_mainThreadSocket;
+    mainThread.events = POLLIN;
+    mainThread.revents = 0;
+
+    struct pollfd pollFds[2] = { remote, mainThread };
+
+    if (poll(pollFds, 2, 0) < 0)
     {
         if (errno != EINTR)
         {
-            perror("Client Thread FD Poll failed");
+            perror("Client Thread FD Polling failed");
             successFlag = 0;
         }
     }
 
-    if (remote.revents & POLLHUP)
+    remote = pollFds[0];
+    mainThread = pollFds[1];
+
+    if (remote.revents & (POLLNVAL) || mainThread.revents & (POLLNVAL))
+    {
+        log_msg(LOG_LEVEL_ERROR, "[Client][%d] Polling on Sockets returned Invalid\n", pClient->m_remoteFd);
+        successFlag = 0;
+    }
+
+    if (remote.revents & (POLLHUP | POLLERR))
     {
         // remote closed
         log_msg(LOG_LEVEL_INFO, "[Client][%d] Remote Closed\n", pClient->m_remoteFd);
@@ -70,12 +148,22 @@ int client_handle_incoming(struct client* pClient)
     else if (remote.revents & POLLIN)
     {
         log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Remote Has Data Available\n", pClient->m_remoteFd);
-        // read data from client
+        if (client_handle_remote_message(pClient) < 0)
+            successFlag = 0;
     }
-    else if (remote.revents & POLLNVAL)
+
+    if (mainThread.revents & (POLLHUP | POLLERR))
     {
-        perror("Client FD Poll Returned Invalid");
-        successFlag = 0;
+        // remote closed
+        log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Main Thread Socket Closed\n", pClient->m_remoteFd);
+        pClient->m_shutdownFlag = 1;
+        return successFlag;
+    }
+    else if (mainThread.revents & POLLIN)
+    {
+        log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Main Thread Has Data Available\n", pClient->m_remoteFd);
+        if (client_handle_main_thread_message(pClient) < 0)
+            successFlag = 0;
     }
 
     return successFlag;
@@ -100,7 +188,7 @@ void *client_thread_main(void *pClientInfo)
     {
         if (client_handle_incoming(pClient) == 0)
         {
-            perror("Client failed to handle message, shutting down thread...");
+            log_msg(LOG_LEVEL_ERROR, "[Client][%d] Failed to handle message, shutting down thread...\n", pClient->m_remoteFd);
             pClient->m_shutdownFlag = 1;
         }
     }

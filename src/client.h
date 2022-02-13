@@ -11,6 +11,8 @@ struct client
 {    
     struct list_entry m_listEntry;
     pthread_t m_threadHandle;
+    time_t m_lastHeartbeatTimestamp;
+
     int m_shutdownFlag;
     int m_remoteFd;
 
@@ -33,7 +35,9 @@ int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remo
 
 void client_free(struct client client);
 
-int client_handle_remote_request(struct client* pClient);
+int client_handle_remote_message(struct client* pClient);
+
+int client_handle_main_thread_message(struct client* pClient);
 
 int client_handle_incoming(struct client* pClient);
 

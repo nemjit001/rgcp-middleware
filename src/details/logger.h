@@ -6,8 +6,9 @@
 
 enum LOG_LEVEL
 {
-    LOG_LEVEL_DEBUG,
-    LOG_LEVEL_INFO
+    LOG_LEVEL_DEBUG = 1,
+    LOG_LEVEL_INFO  = 2,
+    LOG_LEVEL_ERROR = 4
 };
 
 void logger_init();

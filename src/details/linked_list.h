@@ -2,6 +2,7 @@
 #define LINKED_LIST
 
 #include <assert.h>
+#include <stdint.h>
 #include <stddef.h>
 
 struct list_entry
@@ -9,7 +10,7 @@ struct list_entry
     struct list_entry *m_pPrev, *m_pNext;
 };
 
-#define LIST_HEAD(name) (struct list_entry name = { &(name), &(name) })
+#define LIST_HEAD(name) static struct list_entry name = { &(name), &(name) }
 
 static inline void list_init(struct list_entry* pHead)
 {

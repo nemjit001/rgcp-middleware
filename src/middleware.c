@@ -11,11 +11,14 @@
 
 #include "details/logger.h"
 
+#define MIDDLEWARE_DEFAULT_PORT 8000
+#define MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS 30
+
 static struct middleware_state g_middlewareState = { 0 };
 
 static void handle_signal(int signum)
 {
-    if (signum == SIGINT)
+    if (signum & SIGINT)
     {
         g_middlewareState.m_shutdownFlag = 1;
     }
@@ -58,7 +61,7 @@ int _create_listen_socket(uint16_t port)
     return fd;
 }
 
-int middleware_state_init(struct middleware_state* pState)
+int middleware_state_init(struct middleware_state* pState, uint16_t port, time_t heartbeatTimeoutSeconds)
 {
     memset(pState, 0, sizeof(*pState));
 
@@ -69,7 +72,9 @@ int middleware_state_init(struct middleware_state* pState)
     pState->m_numGroups = 0;
 
     pState->m_listenSocket = -1;
-    pState->m_listenSocket = _create_listen_socket(8000);
+    pState->m_listenSocket = _create_listen_socket(port);
+
+    pState->m_heartbeatTimeout = heartbeatTimeoutSeconds;
 
     if (pState->m_listenSocket < 0)
         return -1;
@@ -103,12 +108,11 @@ void middleware_state_free(struct middleware_state* pState)
 int middleware_handle_incoming(struct middleware_state* pState)
 {
     int successFlag = 1;
-    
     nfds_t numSockets = pState->m_numClients + 1;
 
     if (numSockets != pState->m_pollingInfo.m_pollFdSize || pState->m_pollingInfo.m_pollFds == NULL)
     {
-        log_msg(LOG_LEVEL_DEBUG, "[Middleware] Changing Polling FD Count\n");
+        log_msg(LOG_LEVEL_DEBUG, "[Middleware] Changing Polling FD Count to %d\n", numSockets);
 
         if (pState->m_pollingInfo.m_pollFds != NULL)
             free(pState->m_pollingInfo.m_pollFds);
@@ -122,7 +126,6 @@ int middleware_handle_incoming(struct middleware_state* pState)
     }
 
     struct pollfd listenFd;
-
     listenFd.fd = pState->m_listenSocket;
     listenFd.events = POLLIN;
     listenFd.revents = 0;
@@ -151,12 +154,8 @@ int middleware_handle_incoming(struct middleware_state* pState)
         return -1;
     }
 
-    if (pState->m_pollingInfo.m_pollFds[0].revents & POLLIN)
-    {
-        if (middleware_handle_new_connection(pState) < 0)
-            successFlag = 0;
-    }
-
+    pCurr = NULL;
+    pNext = NULL;
     idx = 1;
     LIST_FOR_EACH(pCurr, pNext, &pState->m_childListHead)
     {
@@ -176,12 +175,26 @@ int middleware_handle_incoming(struct middleware_state* pState)
         idx++;
     }
 
+    // client count can change, so new connections need to be managed after handling all client messages
+    if (pState->m_pollingInfo.m_pollFds[0].revents & POLLIN)
+    {
+        if (middleware_handle_new_connection(pState) < 0)
+            successFlag = 0;
+    }
+
     return successFlag;
 }
 
 int middleware_handle_client_message(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) struct client *pClient)
 {
     // FIXME: implement
+
+    /**
+     * 1) read packet from client
+     * 2) deserialize bytes into usable packet struct
+     * 3) swicth on packet type to send back right data 
+     */
+
     return -1;
 }
 
@@ -191,9 +204,14 @@ int middleware_check_client_states(struct middleware_state* pState)
     LIST_FOR_EACH(pCurr, pNext, &(pState->m_childListHead))
     {
         struct client* pClient = LIST_ENTRY(pCurr, struct client, m_listEntry);
+        time_t currentTime = time(NULL);
+        time_t delta = currentTime - pClient->m_lastHeartbeatTimestamp;
        
-        if (pClient->m_shutdownFlag == 1)
+        if (pClient->m_shutdownFlag == 1 || delta > (2 * pState->m_heartbeatTimeout))
         {
+            if (delta > (2 * pState->m_heartbeatTimeout))
+                log_msg(LOG_LEVEL_ERROR, "[Middleware] Client[%d] shut down, heartbeat message not received for 2 periods...\n", pClient->m_remoteFd);
+
             if (pthread_join(pClient->m_threadHandle, NULL) < 0)
             {
                 if (errno == EINTR)
@@ -278,10 +296,34 @@ int middleware_handle_new_group(__attribute__((unused)) struct middleware_state*
     return -1;
 }
 
+size_t middleware_get_groups(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) struct rgcp_group* pGroups)
+{
+    // FIXME: implement
+    return 0;
+}
+
+size_t middleware_get_clients_for_group(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) struct rgcp_group* pGroup, __attribute__((unused)) struct client* pClients)
+{
+    // FIXME: implement
+    return 0;
+}
+
+struct rgcp_group* middleware_get_group(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) uint32_t groupHash)
+{
+    // FIXME: implement
+    return NULL;
+}
+
+int middleware_group_exists(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) uint32_t groupHash)
+{
+    // FIXME: implement
+    return 0;
+}
+
 int main(__attribute__((unused)) int argc, __attribute__((unused)) char** argv)
 {
     logger_init();
-    if (middleware_state_init(&g_middlewareState) < 0)
+    if (middleware_state_init(&g_middlewareState, MIDDLEWARE_DEFAULT_PORT, MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS) < 0)
     {
         perror("Failed to initialize Middleware");
         return -1;
