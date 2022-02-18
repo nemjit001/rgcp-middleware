@@ -1,8 +1,11 @@
 #ifndef RGCP_MIDDLEWARE_CLIENT
 #define RGCP_MIDDLEWARE_CLIENT
 
+#define _GNU_SOURCE
+
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <rgcp/rgcp_api.h>
 
 #include "details/rgcp_group.h"
 #include "details/linked_list.h"
@@ -34,6 +37,10 @@ struct client
 int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remoteFd);
 
 void client_free(struct client client);
+
+int client_register_host_data(struct client* pClient, struct rgcp_packet* pPacket);
+
+int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPacket);
 
 int client_handle_remote_message(struct client* pClient);
 

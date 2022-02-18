@@ -9,8 +9,6 @@
 #include "details/logger.h"
 #include "details/api_packet.h"
 
-#include <rgcp_api.h>
-
 int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remoteFd)
 {
     assert(pClient);
@@ -39,26 +37,82 @@ void client_free(struct client client)
     close(client.m_remoteFd);
 }
 
-int client_handle_remote_message(__attribute__((unused)) struct client* pClient)
+int client_register_host_data(struct client* pClient, struct rgcp_packet* pPacket)
 {
-    struct rgcp_packet* pPacket;
+    assert(pClient);
+    assert(pPacket);
+    
+    return 0;
+}
+
+int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPacket)
+{
+    assert(pClient);
+    assert(pPacket);
+    assert(pPacket->m_packetError == 0);
+
+    switch(pPacket->m_packetType)
+    {
+    case RGCP_TYPE_SOCKET_CONNECT:
+        return client_register_host_data(pClient, pPacket);
+    case RGCP_TYPE_SOCKET_DISCONNECT:
+        return client_forward_socket_disconnect(pClient, pPacket);
+        break;
+    case RGCP_TYPE_GROUP_DISCOVER:
+        return client_forward_group_discovery(pClient);
+        break;
+    case RGCP_TYPE_GROUP_CREATE:
+        return client_forward_group_create(pClient, pPacket);
+        break;
+    case RGCP_TYPE_GROUP_JOIN:
+        return client_forward_group_join(pClient);
+        break;
+    case RGCP_TYPE_GROUP_LEAVE:
+        return client_forward_group_leave(pClient);
+        break;
+    // Below are invalid types, return error
+    case RGCP_TYPE_GROUP_DISCOVER_RESPONSE:
+    case RGCP_TYPE_GROUP_CREATE_RESPONSE:
+    case RGCP_TYPE_GROUP_JOIN_RESPONSE:
+    case RGCP_TYPE_PEER_REMOVE:
+    case RGCP_TYPE_PEER_SHARE:
+        log_msg(LOG_LEVEL_ERROR, "[Client][%d] Received invalid Packet Type (%d)\n", pClient->m_remoteFd, pPacket->m_packetType);
+        break;
+    }
+
+    return 0;
+}
+
+int client_handle_remote_message(struct client* pClient)
+{
+    struct rgcp_packet* pPacket = NULL;
 
     if (rgcp_api_recv(pClient->m_remoteFd, &pPacket) < 0)
-        return -1;
+        goto error;
+
+    if (!pPacket)
+    {
+        log_msg(LOG_LEVEL_ERROR, "[Client][%d] Received Empty Packet from Remote\n", pClient->m_remoteFd);
+        goto error;
+    }
 
     log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Received Remote Packet (%d, %d, %u)\n", pClient->m_remoteFd, pPacket->m_packetType, pPacket->m_packetError, pPacket->m_dataLen);
+
+    if (client_process_remote_packet(pClient, pPacket) < 0)
+        goto error;
 
     rgcp_packet_free(pPacket);
     return 0;
 
-// error:
-//     rgcp_packet_free(pPacket);
-//     return -1;
+error:
+    if (pPacket)
+        rgcp_packet_free(pPacket);
+    return -1;
 }
 
 int client_handle_main_thread_message(struct client* pClient)
 {
-    struct api_packet* pPacket;
+    struct api_packet* pPacket = NULL;
 
     if (api_packet_recv(pClient->m_communicationSockets.m_mainThreadSocket, &pPacket) < 0)
         return -1;
@@ -138,7 +192,7 @@ int client_handle_incoming(struct client* pClient)
         successFlag = 0;
     }
 
-    if (remote.revents & (POLLHUP | POLLERR))
+    if (remote.revents & (POLLRDHUP | POLLERR))
     {
         // remote closed
         log_msg(LOG_LEVEL_INFO, "[Client][%d] Remote Closed\n", pClient->m_remoteFd);

@@ -34,6 +34,8 @@ void log_msg(enum LOG_LEVEL logLevel, const char* format, ...)
     case LOG_LEVEL_INFO:
         printf("[INFO]");
         break;
+    case LOG_LEVEL_ERROR:
+        printf("[ERROR]");
     default:
         break;
     }
