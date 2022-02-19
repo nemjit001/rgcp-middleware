@@ -185,17 +185,36 @@ int middleware_handle_incoming(struct middleware_state* pState)
     return successFlag;
 }
 
-int middleware_handle_client_message(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) struct client *pClient)
+int middleware_handle_client_message(__attribute__((unused)) struct middleware_state* pState, struct client *pClient)
 {
-    // FIXME: implement
+    struct api_packet* pPacket = NULL;
+    if (api_packet_recv(pClient->m_communicationSockets.m_clientThreadSocket, &pPacket) < 0)
+    {
+        log_msg(LOG_LEVEL_ERROR, "[Middleware] Receive from Client [%p] has failed\n", (void*)pClient);
+        return -1;
+    }
 
-    /**
-     * 1) read packet from client
-     * 2) deserialize bytes into usable packet struct
-     * 3) swicth on packet type to send back right data 
-     */
+    log_msg(LOG_LEVEL_DEBUG, "[Middleware] Received packet from Client [%p]: (%d, %d, %lu)\n", (void*)pClient, pPacket->m_packetType, pPacket->m_errorType, pPacket->m_dataLen);
 
-    return -1;
+    // FIXME: finish implementation
+    switch (pPacket->m_packetType)
+    {
+    case API_DISCONNECT:
+        break;
+    case API_GROUP_CREATE:
+        break;
+    case API_GROUP_DISCOVERY:
+        break;
+    case API_GROUP_JOIN:
+        break;
+    case API_GROUP_LEAVE:
+        break;
+    default:
+        log_msg(LOG_LEVEL_ERROR, "[Middleware] Invalid packet type from Client [%p]\n", (void*)pClient);
+        return -1;
+    }
+
+    return 0;
 }
 
 int middleware_check_client_states(struct middleware_state* pState)

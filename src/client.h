@@ -8,6 +8,7 @@
 #include <rgcp/rgcp_api.h>
 
 #include "details/rgcp_group.h"
+#include "details/api_packet.h"
 #include "details/linked_list.h"
 
 struct client
@@ -27,6 +28,7 @@ struct client
 
     struct
     {
+        int m_bConnectionInfoSet;
         struct sockaddr_in m_peerAddress;
         socklen_t m_addrLen;
     } m_connectionInfo;
@@ -38,7 +40,11 @@ int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remo
 
 void client_free(struct client client);
 
+int client_set_heartbeat_timestamp(struct client* pClient);
+
 int client_register_host_data(struct client* pClient, struct rgcp_packet* pPacket);
+
+int client_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE packetType, uint8_t* pPacketData, size_t dataLength);
 
 int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPacket);
 

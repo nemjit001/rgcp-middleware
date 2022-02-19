@@ -4,10 +4,12 @@
 #include <unistd.h>
 #include <poll.h>
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 
+#include <rgcp/rgcp_peer.h>
+
 #include "details/logger.h"
-#include "details/api_packet.h"
 
 int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remoteFd)
 {
@@ -16,6 +18,7 @@ int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remo
     pClient->m_threadHandle = 0;
     pClient->m_shutdownFlag = 0;
     pClient->m_remoteFd = remoteFd;
+    pClient->m_connectionInfo.m_bConnectionInfoSet = 0;
     pClient->m_connectionInfo.m_peerAddress = peerAddress;
     pClient->m_connectionInfo.m_addrLen = sizeof(peerAddress);
 
@@ -37,11 +40,68 @@ void client_free(struct client client)
     close(client.m_remoteFd);
 }
 
+int client_set_heartbeat_timestamp(struct client* pClient)
+{
+    time_t timestamp = time(NULL);
+
+    assert(timestamp > pClient->m_lastHeartbeatTimestamp);
+    if (timestamp < pClient->m_lastHeartbeatTimestamp)
+        return -1;
+
+    return 0;
+}
+
 int client_register_host_data(struct client* pClient, struct rgcp_packet* pPacket)
 {
     assert(pClient);
     assert(pPacket);
     
+    struct _rgcp_peer_info peerInfo;
+    memset(&peerInfo, 0, sizeof(struct _rgcp_peer_info));
+
+    if (deserialize_rgcp_peer_info(&peerInfo, pPacket->m_data, pPacket->m_dataLen) < 0)
+        return -1;
+
+    if (pClient->m_connectionInfo.m_bConnectionInfoSet)
+        return 0;
+
+    pClient->m_connectionInfo.m_addrLen = peerInfo.m_addressLength;
+    pClient->m_connectionInfo.m_peerAddress = peerInfo.m_addressInfo;
+    pClient->m_connectionInfo.m_bConnectionInfoSet = 1;
+
+    return 0;
+}
+
+int client_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE packetType, uint8_t* pPacketData, size_t dataLength)
+{
+    assert(pClient);
+
+    struct api_packet* pPacket = NULL;
+
+    if (api_packet_init(&pPacket, dataLength) < 0)
+        return -1;
+
+    pPacket->m_packetType = packetType;
+    pPacket->m_errorType = 0;
+
+    if (pPacketData)
+    {
+        pPacket->m_dataLen = dataLength;
+        memcpy(pPacket->m_packetData, pPacket, dataLength);
+    }
+    else
+    {
+        pPacket->m_dataLen = 0;
+    }
+
+    if (api_packet_send(pClient->m_communicationSockets.m_mainThreadSocket, pPacket) < 0)
+    {
+        api_packet_free(pPacket);
+        return -1;
+    }
+
+    api_packet_free(pPacket);
+
     return 0;
 }
 
@@ -53,23 +113,20 @@ int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPa
 
     switch(pPacket->m_packetType)
     {
+    case RGCP_TYPE_HEARTBEAT_NOTIFY:
+        return client_set_heartbeat_timestamp(pClient);
     case RGCP_TYPE_SOCKET_CONNECT:
         return client_register_host_data(pClient, pPacket);
     case RGCP_TYPE_SOCKET_DISCONNECT:
-        return client_forward_socket_disconnect(pClient, pPacket);
-        break;
+        return client_forward_packet_data(pClient, API_DISCONNECT, pPacket->m_data, pPacket->m_dataLen);
     case RGCP_TYPE_GROUP_DISCOVER:
-        return client_forward_group_discovery(pClient);
-        break;
+        return client_forward_packet_data(pClient, API_GROUP_DISCOVERY, NULL, 0);
     case RGCP_TYPE_GROUP_CREATE:
-        return client_forward_group_create(pClient, pPacket);
-        break;
+        return client_forward_packet_data(pClient, API_GROUP_CREATE, pPacket->m_data, pPacket->m_dataLen);
     case RGCP_TYPE_GROUP_JOIN:
-        return client_forward_group_join(pClient);
-        break;
+        return client_forward_packet_data(pClient, API_GROUP_JOIN, NULL, 0);
     case RGCP_TYPE_GROUP_LEAVE:
-        return client_forward_group_leave(pClient);
-        break;
+        return client_forward_packet_data(pClient, API_GROUP_LEAVE, NULL, 0);
     // Below are invalid types, return error
     case RGCP_TYPE_GROUP_DISCOVER_RESPONSE:
     case RGCP_TYPE_GROUP_CREATE_RESPONSE:
@@ -77,7 +134,7 @@ int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPa
     case RGCP_TYPE_PEER_REMOVE:
     case RGCP_TYPE_PEER_SHARE:
         log_msg(LOG_LEVEL_ERROR, "[Client][%d] Received invalid Packet Type (%d)\n", pClient->m_remoteFd, pPacket->m_packetType);
-        break;
+        return -1;
     }
 
     return 0;
@@ -192,7 +249,7 @@ int client_handle_incoming(struct client* pClient)
         successFlag = 0;
     }
 
-    if (remote.revents & (POLLRDHUP | POLLERR))
+    if (remote.revents & POLLRDHUP || remote.revents & POLLERR)
     {
         // remote closed
         log_msg(LOG_LEVEL_INFO, "[Client][%d] Remote Closed\n", pClient->m_remoteFd);
@@ -206,7 +263,7 @@ int client_handle_incoming(struct client* pClient)
             successFlag = 0;
     }
 
-    if (mainThread.revents & (POLLHUP | POLLERR))
+    if (mainThread.revents & POLLHUP || mainThread.revents & POLLERR)
     {
         // remote closed
         log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Main Thread Socket Closed\n", pClient->m_remoteFd);
