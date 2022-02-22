@@ -22,6 +22,7 @@ struct rgcp_middleware_group
     rgcp_group_info_t m_groupNameInfo;
 
     size_t m_childCount;
+    time_t m_lastActivityTimestamp;
 };
 
 void rgcp_middleware_group_init(struct rgcp_middleware_group* pGroup, const char* pGroupName, size_t nameLength);

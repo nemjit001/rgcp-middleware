@@ -19,6 +19,8 @@ void rgcp_middleware_group_init(struct rgcp_middleware_group* pGroup, const char
 
     pGroup->m_groupNameInfo.m_groupNameLength = nameLength;
     pGroup->m_groupNameInfo.m_groupNameHash = CRC32_STR_DYNAMIC(pGroupName, nameLength); 
+
+    pGroup->m_lastActivityTimestamp = time(NULL);
 }
 
 void rgcp_middleware_group_free(struct rgcp_middleware_group group)
@@ -43,6 +45,7 @@ int rgcp_middleware_group_register_child(struct rgcp_middleware_group* pGroup, v
     list_add_tail(&pNew->m_listEntry, &pGroup->m_pGroupChildListHead);
     pGroup->m_childCount++;
 
+    pGroup->m_lastActivityTimestamp = time(NULL);
     return 0;
 }
 
@@ -50,5 +53,7 @@ void rgcp_middleware_group_delete_child(struct rgcp_middleware_group* pGroup, st
 {
     list_del(&pGroupChild->m_listEntry);
     free(pGroupChild);
+
+    pGroup->m_lastActivityTimestamp = time(NULL);
     pGroup->m_childCount--;
 }

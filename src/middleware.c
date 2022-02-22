@@ -14,6 +14,7 @@
 
 #define MIDDLEWARE_DEFAULT_PORT 8000
 #define MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS 30
+#define MIDDLEWARE_DEFAULT_GROUP_INACTIVE_TIMEOUT_SECONDS 60
 
 static struct middleware_state g_middlewareState = { 0 };
 
@@ -62,7 +63,7 @@ int _create_listen_socket(uint16_t port)
     return fd;
 }
 
-int _send_middleware_groups(struct middleware_state* pState, __attribute__((unused)) struct client* pClient)
+int _send_middleware_groups(struct middleware_state* pState, struct client* pClient)
 {
     struct rgcp_middleware_group** ppGroups = NULL;
     size_t groupCount = middleware_get_groups(pState, &ppGroups);
@@ -113,7 +114,7 @@ int _send_middleware_groups(struct middleware_state* pState, __attribute__((unus
     return 0;
 }
 
-int middleware_state_init(struct middleware_state* pState, uint16_t port, time_t heartbeatTimeoutSeconds)
+int middleware_state_init(struct middleware_state* pState, uint16_t port, time_t heartbeatTimeoutSeconds, time_t groupActivityTimeoutSeconds)
 {
     memset(pState, 0, sizeof(*pState));
 
@@ -127,6 +128,7 @@ int middleware_state_init(struct middleware_state* pState, uint16_t port, time_t
     pState->m_listenSocket = _create_listen_socket(port);
 
     pState->m_heartbeatTimeout = heartbeatTimeoutSeconds;
+    pState->m_groupActivityTimeout = groupActivityTimeoutSeconds;
 
     if (pState->m_listenSocket < 0)
         return -1;
@@ -346,6 +348,7 @@ int middleware_check_client_states(struct middleware_state* pState)
     LIST_FOR_EACH(pCurr, pNext, &(pState->m_childListHead))
     {
         struct client* pClient = LIST_ENTRY(pCurr, struct client, m_listEntry);
+        assert(pClient->m_pSelf == pClient);
         time_t currentTime = time(NULL);
         time_t delta = currentTime - pClient->m_lastHeartbeatTimestamp;
        
@@ -367,6 +370,29 @@ int middleware_check_client_states(struct middleware_state* pState)
             free(pClient);
 
             pState->m_numClients--;
+        }
+    }
+
+    return 0;
+}
+
+int middleware_check_group_states(struct middleware_state* pState)
+{
+    struct list_entry* pCurr, * pNext;
+    LIST_FOR_EACH(pCurr, pNext, &(pState->m_groupListHead))
+    {
+        struct rgcp_middleware_group* pGroup = LIST_ENTRY(pCurr, struct rgcp_middleware_group, m_listEntry);
+
+        time_t currentTime = time(NULL);
+        time_t delta = currentTime - pGroup->m_lastActivityTimestamp;
+
+        if (delta > pState->m_groupActivityTimeout && pGroup->m_childCount == 0)
+        {
+            log_msg(LOG_LEVEL_INFO, "[Middleware] Deleted Group (%s, 0x%x) due to inactivity and no connected clients\n", pGroup->m_groupNameInfo.m_pGroupName, pGroup->m_groupNameInfo.m_groupNameHash);
+
+            list_del(pCurr);
+            rgcp_middleware_group_free(*pGroup);
+            free(pGroup);
         }
     }
 
@@ -477,7 +503,7 @@ int middleware_group_exists(__attribute__((unused)) struct middleware_state* pSt
 int main(__attribute__((unused)) int argc, __attribute__((unused)) char** argv)
 {
     logger_init();
-    if (middleware_state_init(&g_middlewareState, MIDDLEWARE_DEFAULT_PORT, MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS) < 0)
+    if (middleware_state_init(&g_middlewareState, MIDDLEWARE_DEFAULT_PORT, MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS, MIDDLEWARE_DEFAULT_GROUP_INACTIVE_TIMEOUT_SECONDS) < 0)
     {
         perror("Failed to initialize Middleware");
         return -1;
@@ -492,6 +518,9 @@ int main(__attribute__((unused)) int argc, __attribute__((unused)) char** argv)
             break;
 
         if (middleware_check_client_states(&g_middlewareState) < 0)
+            break;
+        
+        if (middleware_check_group_states(&g_middlewareState) < 0)
             break;
     } 
 

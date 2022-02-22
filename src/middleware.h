@@ -18,6 +18,7 @@ struct middleware_state
     int m_shutdownFlag;
 
     time_t m_heartbeatTimeout;
+    time_t m_groupActivityTimeout;
 
     struct 
     {
@@ -26,7 +27,7 @@ struct middleware_state
     } m_pollingInfo;
 };
 
-int middleware_state_init(struct middleware_state* pState, uint16_t port, time_t heartbeatTimeoutSeconds);
+int middleware_state_init(struct middleware_state* pState, uint16_t port, time_t heartbeatTimeoutSeconds, time_t groupActivityTimeoutSeconds);
 
 void middleware_state_free(struct middleware_state* pState);
 
@@ -37,6 +38,8 @@ int middleware_handle_incoming(struct middleware_state* pState);
 int middleware_handle_client_message(struct middleware_state* pState, struct client *pClient);
 
 int middleware_check_client_states(struct middleware_state* pState);
+
+int middleware_check_group_states(struct middleware_state* pState);
 
 int middleware_handle_new_connection(struct middleware_state* pState);
 

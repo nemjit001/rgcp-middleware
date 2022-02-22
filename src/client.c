@@ -37,6 +37,7 @@ void client_free(struct client client)
 {
     close(client.m_communicationSockets.m_mainThreadSocket);
     close(client.m_communicationSockets.m_clientThreadSocket);
+    shutdown(client.m_remoteFd, SHUT_RDWR);
     close(client.m_remoteFd);
 }
 
@@ -274,7 +275,7 @@ int client_handle_incoming(struct client* pClient)
     
     struct pollfd remote;
     remote.fd = pClient->m_remoteFd;
-    remote.events = POLLIN;
+    remote.events = POLLIN | POLLRDHUP;
     remote.revents = 0;
 
     struct pollfd mainThread;
@@ -305,9 +306,8 @@ int client_handle_incoming(struct client* pClient)
     if (remote.revents & POLLRDHUP || remote.revents & POLLERR)
     {
         // remote closed
-        log_msg(LOG_LEVEL_INFO, "[Client][%d] Remote Closed\n", pClient->m_remoteFd);
+        log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Remote Closed\n", pClient->m_remoteFd);
         pClient->m_shutdownFlag = 1;
-        return successFlag;
     }
     else if (remote.revents & POLLIN)
     {
@@ -321,7 +321,6 @@ int client_handle_incoming(struct client* pClient)
         // remote closed
         log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Main Thread Socket Closed\n", pClient->m_remoteFd);
         pClient->m_shutdownFlag = 1;
-        return successFlag;
     }
     else if (mainThread.revents & POLLIN)
     {
@@ -346,7 +345,7 @@ void *client_thread_main(void *pClientInfo)
         pthread_exit(NULL);
     }
 
-    log_msg(LOG_LEVEL_INFO, "[Client][%d] Initialized Client Thread...\n", pClient->m_remoteFd);
+    log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Initialized Client Thread...\n", pClient->m_remoteFd);
 
     while(pClient->m_shutdownFlag == 0)
     {
@@ -357,7 +356,7 @@ void *client_thread_main(void *pClientInfo)
         }
     }
 
-    log_msg(LOG_LEVEL_INFO, "[Client][%d] Shut Down Client Thread...\n", pClient->m_remoteFd);
+    log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Shut Down Client Thread...\n", pClient->m_remoteFd);
 
     return NULL;
 }

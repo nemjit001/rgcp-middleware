@@ -16,15 +16,15 @@ void logger_free()
 
 void log_msg(enum LOG_LEVEL logLevel, const char* format, ...)
 {
-    pthread_mutex_lock(&g_loggingMtx);
-
-    va_list args;
-    va_start(args, format);
-
 #ifdef NDEBUG
     if (logLevel == LOG_LEVEL_DEBUG)
         return;
 #endif
+
+    pthread_mutex_lock(&g_loggingMtx);
+
+    va_list args;
+    va_start(args, format);
 
     switch(logLevel)
     {
