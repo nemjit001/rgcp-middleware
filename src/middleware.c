@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <rgcp/rgcp_group.h>
 
 #include "details/logger.h"
 
@@ -61,6 +62,57 @@ int _create_listen_socket(uint16_t port)
     return fd;
 }
 
+int _send_middleware_groups(struct middleware_state* pState, __attribute__((unused)) struct client* pClient)
+{
+    struct rgcp_middleware_group** ppGroups = NULL;
+    size_t groupCount = middleware_get_groups(pState, &ppGroups);
+    
+    uint8_t* pGroupInfoBuffer = NULL;
+    ssize_t totalBufferSize = 0;
+    for (size_t i = 0; i < groupCount; i++)
+    {
+        uint8_t* pTempBuffer = NULL;
+        ssize_t ptrSize = serialize_group_name_info((ppGroups[i]->m_groupNameInfo), &pTempBuffer);
+
+        if (ptrSize < 0)
+        {
+            free(pGroupInfoBuffer);
+            free(pTempBuffer);
+            return -1;
+        }
+
+        ssize_t oldBufferSize = totalBufferSize;
+        totalBufferSize += ptrSize + sizeof(uint32_t);
+        pGroupInfoBuffer = realloc(pGroupInfoBuffer, totalBufferSize);
+
+        assert(totalBufferSize > oldBufferSize);
+        assert(pTempBuffer);
+        assert(pGroupInfoBuffer);
+
+        memset(pGroupInfoBuffer + oldBufferSize, 0, sizeof(uint32_t) + ptrSize);
+        memcpy(pGroupInfoBuffer + oldBufferSize, ((uint32_t*)&ptrSize), sizeof(uint32_t));
+        memcpy(pGroupInfoBuffer + oldBufferSize + sizeof(uint32_t), pTempBuffer, ptrSize);
+
+        free(pTempBuffer);
+    }
+
+    if (pGroupInfoBuffer == NULL)
+        assert(totalBufferSize == 0);
+
+    log_msg(LOG_LEVEL_DEBUG, "[Middleware] Collected %d group(s) @ %p (%ld bytes)\n", groupCount, pGroupInfoBuffer, totalBufferSize);
+
+    if (middleware_forward_packet_data(pClient, API_GROUP_DISCOVERY, pGroupInfoBuffer, totalBufferSize) < 0)
+    {
+        free(ppGroups);
+        free(pGroupInfoBuffer);
+        return -1;
+    }
+
+    free(ppGroups);
+    free(pGroupInfoBuffer);
+    return 0;
+}
+
 int middleware_state_init(struct middleware_state* pState, uint16_t port, time_t heartbeatTimeoutSeconds)
 {
     memset(pState, 0, sizeof(*pState));
@@ -101,8 +153,42 @@ void middleware_state_free(struct middleware_state* pState)
         free(pClient);
     }
 
+    LIST_FOR_EACH(pCurr, pNext, &(pState->m_groupListHead))
+    {
+        struct rgcp_middleware_group* pGroup = LIST_ENTRY(pCurr, struct rgcp_middleware_group, m_listEntry);
+        rgcp_middleware_group_free(*pGroup);
+        free(pGroup);
+    }
+
     if (pState->m_pollingInfo.m_pollFds != NULL)
         free(pState->m_pollingInfo.m_pollFds);
+}
+
+int middleware_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE packetType, uint8_t* pPacketData, size_t dataLength)
+{
+    assert(pClient);
+
+    if (pPacketData == NULL)
+        dataLength = 0;
+
+    struct api_packet* pPacket = NULL;
+    if (api_packet_init(&pPacket, dataLength) < 0)
+        return -1;
+    
+    if (pPacketData != NULL)
+        memcpy(pPacket->m_packetData, pPacketData, dataLength);
+    
+    pPacket->m_packetType = packetType;
+    pPacket->m_dataLen = dataLength;
+
+    if (api_packet_send(pClient->m_communicationSockets.m_clientThreadSocket, pPacket) < 0)
+    {
+        api_packet_free(pPacket);
+        return -1;
+    }
+
+    api_packet_free(pPacket);
+    return dataLength;
 }
 
 int middleware_handle_incoming(struct middleware_state* pState)
@@ -185,7 +271,7 @@ int middleware_handle_incoming(struct middleware_state* pState)
     return successFlag;
 }
 
-int middleware_handle_client_message(__attribute__((unused)) struct middleware_state* pState, struct client *pClient)
+int middleware_handle_client_message(struct middleware_state* pState, struct client *pClient)
 {
     struct api_packet* pPacket = NULL;
     if (api_packet_recv(pClient->m_communicationSockets.m_clientThreadSocket, &pPacket) < 0)
@@ -200,21 +286,58 @@ int middleware_handle_client_message(__attribute__((unused)) struct middleware_s
     switch (pPacket->m_packetType)
     {
     case API_DISCONNECT:
+    {
+        if (middleware_forward_packet_data(pClient, API_DISCONNECT, NULL, 0) < 0)
+            goto error;
+
         break;
+    }
     case API_GROUP_CREATE:
+    {
+        char* groupname = calloc(pPacket->m_dataLen, sizeof(char));
+        assert(groupname);
+        memcpy(groupname, pPacket->m_packetData, pPacket->m_dataLen);
+
+        if (middleware_handle_new_group(pState, groupname) < 0)
+        {
+            free(groupname);
+            goto error;
+        }
+
+        free(groupname);
+        if (middleware_forward_packet_data(pClient, API_GROUP_CREATE, NULL, 0) < 0)
+            goto error;
+        
         break;
+    }
     case API_GROUP_DISCOVERY:
+    {
+        if(_send_middleware_groups(pState, pClient) < 0)
+            goto error;
+
         break;
+    }
     case API_GROUP_JOIN:
+    {
+        // TODO: register client with group, send response to remote
         break;
+    }
     case API_GROUP_LEAVE:
+    {
+        // TODO: remove client from group, send response to remote
         break;
+    }
     default:
         log_msg(LOG_LEVEL_ERROR, "[Middleware] Invalid packet type from Client [%p]\n", (void*)pClient);
         return -1;
     }
 
+    api_packet_free(pPacket);
     return 0;
+
+error:
+    api_packet_free(pPacket);
+    return -1;
 }
 
 int middleware_check_client_states(struct middleware_state* pState)
@@ -244,27 +367,6 @@ int middleware_check_client_states(struct middleware_state* pState)
             free(pClient);
 
             pState->m_numClients--;
-        }
-    }
-
-    return 0;
-}
-
-int middleware_check_group_states(struct middleware_state* pState)
-{
-    struct list_entry* pCurr, * pNext;
-    LIST_FOR_EACH(pCurr, pNext, &(pState->m_childListHead))
-    {
-        struct rgcp_group* pGroup = LIST_ENTRY(pCurr, struct rgcp_group, m_listEntry);
-       
-        if (rgcp_group_empty(*pGroup))
-        {
-            log_msg(LOG_LEVEL_INFO, "[Middleware] Deleted group \"%s\"(%u)\n", pGroup->m_groupNameInfo.m_pGroupName, pGroup->m_groupNameInfo.m_groupHash);
-
-            rgcp_group_free(*pGroup);
-            list_del(pCurr);
-
-            pState->m_numGroups--;
         }
     }
 
@@ -309,19 +411,52 @@ int middleware_handle_new_connection(struct middleware_state* pState)
     return 0;
 }
 
-int middleware_handle_new_group(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) const char* pGroupName)
-{
-    // FIXME: implement
-    return -1;
-}
+int middleware_handle_new_group(struct middleware_state* pState, const char* pGroupName)
+{    
+    struct rgcp_middleware_group* pGroup = calloc(sizeof(struct rgcp_middleware_group), 1);
+    assert(pGroup);
 
-size_t middleware_get_groups(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) struct rgcp_group* pGroups)
-{
-    // FIXME: implement
+    if (!pGroup)
+    {
+        log_msg(LOG_LEVEL_ERROR, "[Middleware] Failed to allocate group memory");
+        return -1;
+    }
+
+    rgcp_middleware_group_init(pGroup, pGroupName, strlen(pGroupName));
+
+    struct list_entry *pCurr, *pNext;
+    LIST_FOR_EACH(pCurr, pNext, &pState->m_groupListHead)
+    {
+        struct rgcp_middleware_group* pCurrGroup = LIST_ENTRY(pCurr, struct rgcp_middleware_group, m_listEntry);
+        if (pCurrGroup->m_groupNameInfo.m_groupNameHash == pGroup->m_groupNameInfo.m_groupNameHash)
+            pGroup->m_groupNameInfo.m_groupNameHash++;
+    }
+
+    list_add_tail(&pGroup->m_listEntry, &pState->m_groupListHead);
+    pState->m_numGroups++;
+    log_msg(LOG_LEVEL_INFO, "[Middleware] Created new group (%s, 0x%x)\n", pGroupName, pGroup->m_groupNameInfo.m_groupNameHash);
+
     return 0;
 }
 
-size_t middleware_get_clients_for_group(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) struct rgcp_group* pGroup, __attribute__((unused)) struct client* pClients)
+size_t middleware_get_groups(struct middleware_state* pState, struct rgcp_middleware_group*** pppGroups)
+{
+    assert(pppGroups);
+    (*pppGroups) = NULL;
+
+    size_t count = 0;
+    struct list_entry* pCurr, * pNext;
+    LIST_FOR_EACH(pCurr, pNext, &pState->m_groupListHead)
+    {
+        count++;
+        (*pppGroups) = realloc((*pppGroups), count * sizeof(struct rgcp_middleware_group*));
+        (*pppGroups)[count - 1] = LIST_ENTRY(pCurr, struct rgcp_middleware_group, m_listEntry);
+    }
+
+    return count;
+}
+
+size_t middleware_get_clients_for_group(__attribute__((unused)) struct middleware_state* pState, __attribute__((unused)) struct rgcp_middleware_group* pGroup, __attribute__((unused)) struct client* pClients)
 {
     // FIXME: implement
     return 0;

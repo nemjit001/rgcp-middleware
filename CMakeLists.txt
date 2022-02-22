@@ -12,7 +12,7 @@ set(EXECUTABLE_OUTPUT_PATH ${CMAKE_SOURCE_DIR}/bin)
 add_executable(${TARGET_NAME}
     src/details/logger.c
     src/details/api_packet.c
-    src/details/rgcp_group.c
+    src/details/rgcp_middleware_group.c
     src/client.c
     src/middleware.c
 )

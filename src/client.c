@@ -76,8 +76,10 @@ int client_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE pack
 {
     assert(pClient);
 
-    struct api_packet* pPacket = NULL;
+    if (pPacketData == NULL)
+        dataLength = 0;
 
+    struct api_packet* pPacket = NULL;
     if (api_packet_init(&pPacket, dataLength) < 0)
         return -1;
 
@@ -85,14 +87,9 @@ int client_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE pack
     pPacket->m_errorType = 0;
 
     if (pPacketData)
-    {
-        pPacket->m_dataLen = dataLength;
-        memcpy(pPacket->m_packetData, pPacket, dataLength);
-    }
-    else
-    {
-        pPacket->m_dataLen = 0;
-    }
+        memcpy(pPacket->m_packetData, pPacketData, dataLength);
+
+    pPacket->m_dataLen = dataLength;
 
     if (api_packet_send(pClient->m_communicationSockets.m_mainThreadSocket, pPacket) < 0)
     {
@@ -102,6 +99,34 @@ int client_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE pack
 
     api_packet_free(pPacket);
 
+    return 0;
+}
+
+int client_send_packet_to_remote(int fd, enum RGCP_PACKET_TYPE packetType, enum RGCP_PACKET_ERROR error, uint8_t* pPacketData, size_t dataLength)
+{
+    if (pPacketData == NULL)
+        dataLength = 0;
+    
+    struct rgcp_packet* pPacket = NULL;
+    if (rgcp_packet_init(&pPacket, dataLength) < 0)
+        return -1;
+
+    assert(pPacket);
+
+    pPacket->m_packetType = packetType;
+    pPacket->m_packetError = error;
+    pPacket->m_dataLen = dataLength;
+
+    if (pPacketData != NULL)
+        memcpy(pPacket->m_data, pPacketData, dataLength);
+
+    if (rgcp_api_send(fd, pPacket) < 0)
+    {
+        rgcp_packet_free(pPacket);
+        return -1;
+    }
+    
+    rgcp_packet_free(pPacket);
     return 0;
 }
 
@@ -128,6 +153,7 @@ int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPa
     case RGCP_TYPE_GROUP_LEAVE:
         return client_forward_packet_data(pClient, API_GROUP_LEAVE, NULL, 0);
     // Below are invalid types, return error
+    case RGCP_TYPE_SOCKET_DISCONNECT_RESPONSE:
     case RGCP_TYPE_GROUP_DISCOVER_RESPONSE:
     case RGCP_TYPE_GROUP_CREATE_RESPONSE:
     case RGCP_TYPE_GROUP_JOIN_RESPONSE:
@@ -176,14 +202,33 @@ int client_handle_main_thread_message(struct client* pClient)
 
     log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Received Main Thread Packet (%d, %d, %u)\n", pClient->m_remoteFd, pPacket->m_packetType, pPacket->m_errorType, pPacket->m_dataLen);
 
+    enum RGCP_PACKET_ERROR packetError = RGCP_ERROR_NO_ERROR;
+    switch (pPacket->m_errorType)
+    {
+        case API_INGRP:
+            packetError = RGCP_ERROR_ALREADY_IN_GROUP;
+            break;
+        case API_NOGRP:
+            packetError = RGCP_ERROR_NO_SUCH_GROUP;
+            break;
+        case API_NOERR:
+        default:
+            break;
+    }
+
     switch (pPacket->m_packetType)
     {
     case API_HEARTBEAT_NOTIFY:
         // should not receive heartbeat notify from main thread, something went wrong
         goto error;
     case API_GROUP_DISCOVERY:
-        // response to group discovery, send to remote
+    // response to group discovery, send to remote
+    {
+        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_GROUP_DISCOVER_RESPONSE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
+            goto error;
+        
         break;
+    }
     case API_GROUP_JOIN:
         // response to group join, send to remote
         break;
@@ -191,8 +236,12 @@ int client_handle_main_thread_message(struct client* pClient)
         // response to group leave, send to remote
         break;
     case API_GROUP_CREATE:
-        // response to group creation, send to remote
+    {
+        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_GROUP_CREATE_RESPONSE, packetError, NULL, 0) < 0)
+            goto error;
+
         break;
+    }
     case API_PEER_SHARE:
         // new member, send to remote
         break;
@@ -200,10 +249,14 @@ int client_handle_main_thread_message(struct client* pClient)
         // group info, send to remote
         break;
     case API_DISCONNECT:
-        // group member disconnect, send to remote
+    {
+        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_SOCKET_DISCONNECT_RESPONSE, packetError, NULL, 0) < 0)
+            goto error;
+
         break;
+    }
     default:
-        log_msg(LOG_LEVEL_ERROR, "[Client][%d] Received Main Thread Packet with Invalid Type: %d\n", pClient->m_remoteFd);
+        log_msg(LOG_LEVEL_ERROR, "[Client][%d] Received Main Thread Packet with Invalid Type: %d\n", pClient->m_remoteFd, pPacket->m_packetType);
         goto error;
     }
 

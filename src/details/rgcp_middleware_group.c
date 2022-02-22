@@ -1,11 +1,11 @@
-#include "rgcp_group.h"
+#include "rgcp_middleware_group.h"
 
 #include <assert.h>
 #include <string.h>
 
 #include "crc32.h"
 
-void rgcp_group_init(struct rgcp_group* pGroup, const char* pGroupName, size_t nameLength)
+void rgcp_middleware_group_init(struct rgcp_middleware_group* pGroup, const char* pGroupName, size_t nameLength)
 {
     assert(pGroup);
     assert(nameLength == strlen(pGroupName));
@@ -17,23 +17,23 @@ void rgcp_group_init(struct rgcp_group* pGroup, const char* pGroupName, size_t n
     assert(pGroup->m_groupNameInfo.m_pGroupName);
     memcpy((void*)pGroup->m_groupNameInfo.m_pGroupName, (void*)pGroupName, nameLength);
 
-    pGroup->m_groupNameInfo.m_nameLength = nameLength;
-    pGroup->m_groupNameInfo.m_groupHash = CRC32_STR_DYNAMIC(pGroupName, nameLength); 
+    pGroup->m_groupNameInfo.m_groupNameLength = nameLength;
+    pGroup->m_groupNameInfo.m_groupNameHash = CRC32_STR_DYNAMIC(pGroupName, nameLength); 
 }
 
-void rgcp_group_free(struct rgcp_group group)
+void rgcp_middleware_group_free(struct rgcp_middleware_group group)
 {
     free((void*)group.m_groupNameInfo.m_pGroupName);
 }
 
-int rgcp_group_empty(struct rgcp_group group)
+int rgcp_middleware_group_empty(struct rgcp_middleware_group group)
 {
     return group.m_childCount == 0;
 }
 
-int rgcp_group_register_child(struct rgcp_group* pGroup, void* pChild)
+int rgcp_middleware_group_register_child(struct rgcp_middleware_group* pGroup, void* pChild)
 {
-    struct rgcp_group_child* pNew = malloc(sizeof(struct rgcp_group_child));
+    struct rgcp_middleware_group_child* pNew = malloc(sizeof(struct rgcp_middleware_group_child));
     assert(pNew);
 
     if (!pNew)
@@ -46,7 +46,7 @@ int rgcp_group_register_child(struct rgcp_group* pGroup, void* pChild)
     return 0;
 }
 
-void rgcp_group_delete_child(struct rgcp_group* pGroup, struct rgcp_group_child* pGroupChild)
+void rgcp_middleware_group_delete_child(struct rgcp_middleware_group* pGroup, struct rgcp_middleware_group_child* pGroupChild)
 {
     list_del(&pGroupChild->m_listEntry);
     free(pGroupChild);

@@ -7,7 +7,7 @@
 #include <sys/socket.h>
 #include <rgcp/rgcp_api.h>
 
-#include "details/rgcp_group.h"
+#include "details/rgcp_middleware_group.h"
 #include "details/api_packet.h"
 #include "details/linked_list.h"
 
@@ -45,6 +45,8 @@ int client_set_heartbeat_timestamp(struct client* pClient);
 int client_register_host_data(struct client* pClient, struct rgcp_packet* pPacket);
 
 int client_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE packetType, uint8_t* pPacketData, size_t dataLength);
+
+int client_send_packet_to_remote(int fd, enum RGCP_PACKET_TYPE packetType, enum RGCP_PACKET_ERROR error, uint8_t* pPacketData, size_t dataLength);
 
 int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPacket);
 

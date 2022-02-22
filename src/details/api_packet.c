@@ -4,6 +4,8 @@
 #include <assert.h>
 #include <unistd.h>
 
+#include "logger.h"
+
 int api_packet_init(struct api_packet** ppPacket, size_t dataLen)
 {
     assert(ppPacket);
@@ -31,33 +33,33 @@ int api_packet_recv(int fd, struct api_packet** ppPacket)
     assert(fd >= 0);
     assert(ppPacket);
 
-    uint32_t packetLegth = 0;
-    if (read(fd, &packetLegth, sizeof(uint32_t)) < 0)
+    uint32_t packetLength = 0;
+    if (read(fd, &packetLength, sizeof(uint32_t)) < 0)
         return -1;
 
-    if (packetLegth == 0)
+    if (packetLength == 0)
         return 0;
     
-    uint8_t* buffer = calloc(packetLegth, sizeof(uint8_t));
+    uint8_t* buffer = calloc(packetLength, sizeof(uint8_t));
     if (!buffer)
         return -1;
 
-    if (read(fd, buffer, packetLegth) < 0)
+    if (read(fd, buffer, packetLength) < 0)
     {
         free(buffer);
         return -1;
     }
     
-    if (api_packet_init(ppPacket, packetLegth) < 0)
+    if (api_packet_init(ppPacket, packetLength) < 0)
     {
         free(buffer);
         return -1;
     }
     
-    memcpy(*ppPacket, buffer, packetLegth);
+    memcpy(*ppPacket, buffer, packetLength);
     free(buffer);
 
-    return packetLegth;
+    return packetLength;
 }
 
 int api_packet_send(int fd, struct api_packet* pPacket)
