@@ -29,6 +29,7 @@ int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remo
     pClient->m_communicationSockets.m_mainThreadSocket = sockets[0];
     pClient->m_communicationSockets.m_clientThreadSocket = sockets[1];
 
+    pClient->m_pConnectedGroup = NULL;
     pClient->m_pSelf = pClient;
     return 0;
 }
@@ -45,9 +46,12 @@ int client_set_heartbeat_timestamp(struct client* pClient)
 {
     time_t timestamp = time(NULL);
 
-    assert(timestamp > pClient->m_lastHeartbeatTimestamp);
+    assert(timestamp >= pClient->m_lastHeartbeatTimestamp);
     if (timestamp < pClient->m_lastHeartbeatTimestamp)
         return -1;
+
+    log_msg(LOG_LEVEL_DEBUG, "[Client][%d] <3\n", pClient->m_remoteFd);
+    pClient->m_lastHeartbeatTimestamp = timestamp;
 
     return 0;
 }
@@ -150,7 +154,7 @@ int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPa
     case RGCP_TYPE_GROUP_CREATE:
         return client_forward_packet_data(pClient, API_GROUP_CREATE, pPacket->m_data, pPacket->m_dataLen);
     case RGCP_TYPE_GROUP_JOIN:
-        return client_forward_packet_data(pClient, API_GROUP_JOIN, NULL, 0);
+        return client_forward_packet_data(pClient, API_GROUP_JOIN, pPacket->m_data, pPacket->m_dataLen);
     case RGCP_TYPE_GROUP_LEAVE:
         return client_forward_packet_data(pClient, API_GROUP_LEAVE, NULL, 0);
     // Below are invalid types, return error
@@ -206,13 +210,16 @@ int client_handle_main_thread_message(struct client* pClient)
     enum RGCP_PACKET_ERROR packetError = RGCP_ERROR_NO_ERROR;
     switch (pPacket->m_errorType)
     {
-        case API_INGRP:
+        case API_ERROR_INGRP:
             packetError = RGCP_ERROR_ALREADY_IN_GROUP;
             break;
-        case API_NOGRP:
+        case API_ERROR_NOGRP:
             packetError = RGCP_ERROR_NO_SUCH_GROUP;
             break;
-        case API_NOERR:
+        case API_ERROR_SHARE:
+            packetError = RGCP_ERROR_SHARING_ERROR;
+            break;
+        case API_ERROR_NOERR:
         default:
             break;
     }
@@ -231,10 +238,18 @@ int client_handle_main_thread_message(struct client* pClient)
         break;
     }
     case API_GROUP_JOIN:
-        // response to group join, send to remote
+    {
+        // response to group join, only contains error data
+        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_GROUP_JOIN_RESPONSE, packetError, NULL, 0) < 0)
+            goto error;
+
         break;
+    }
     case API_GROUP_LEAVE:
-        // response to group leave, send to remote
+        // peer left group, send to remote
+        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_PEER_REMOVE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
+            goto error;
+
         break;
     case API_GROUP_CREATE:
     {
@@ -244,11 +259,19 @@ int client_handle_main_thread_message(struct client* pClient)
         break;
     }
     case API_PEER_SHARE:
-        // new member, send to remote
+    {
+        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_PEER_SHARE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
+            goto error;
+
         break;
+    }
     case API_GROUP_SHARE:
-        // group info, send to remote
+    {
+        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_GROUP_JOIN_RESPONSE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
+            goto error;
+
         break;
+    }
     case API_DISCONNECT:
     {
         if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_SOCKET_DISCONNECT_RESPONSE, packetError, NULL, 0) < 0)

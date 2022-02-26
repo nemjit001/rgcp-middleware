@@ -18,9 +18,10 @@ enum API_PACKET_TYPE
 
 enum API_ERROR_TYPE
 {
-    API_NOERR       = 0,
-    API_NOGRP       = 1,
-    API_INGRP       = 2
+    API_ERROR_NOERR = 0,
+    API_ERROR_NOGRP = 1,
+    API_ERROR_INGRP = 2,
+    API_ERROR_SHARE = 4
 };
 
 struct api_packet

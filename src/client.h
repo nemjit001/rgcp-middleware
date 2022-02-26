@@ -33,6 +33,7 @@ struct client
         socklen_t m_addrLen;
     } m_connectionInfo;
 
+    struct rgcp_middleware_group* m_pConnectedGroup;
     struct client* m_pSelf;
 };
 

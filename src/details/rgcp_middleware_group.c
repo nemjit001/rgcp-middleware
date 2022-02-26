@@ -10,7 +10,7 @@ void rgcp_middleware_group_init(struct rgcp_middleware_group* pGroup, const char
     assert(pGroup);
     assert(nameLength == strlen(pGroupName));
 
-    list_init(&pGroup->m_pGroupChildListHead);
+    list_init(&pGroup->m_groupChildListHead);
     pGroup->m_childCount = 0;
     pGroup->m_groupNameInfo.m_pGroupName = calloc(nameLength + 1, sizeof(char));
 
@@ -23,9 +23,18 @@ void rgcp_middleware_group_init(struct rgcp_middleware_group* pGroup, const char
     pGroup->m_lastActivityTimestamp = time(NULL);
 }
 
-void rgcp_middleware_group_free(struct rgcp_middleware_group group)
+void rgcp_middleware_group_free(struct rgcp_middleware_group* pGroup)
 {
-    free((void*)group.m_groupNameInfo.m_pGroupName);
+    struct list_entry *pCurr, *pNext;
+    LIST_FOR_EACH(pCurr, pNext, &(pGroup->m_groupChildListHead))
+    {
+        struct rgcp_middleware_group_child* pChild = LIST_ENTRY(pCurr, struct rgcp_middleware_group_child, m_listEntry);
+
+        rgcp_middleware_group_delete_child(pGroup, pChild);
+    }
+
+    assert(pGroup->m_childCount == 0);
+    free((void*)pGroup->m_groupNameInfo.m_pGroupName);
 }
 
 int rgcp_middleware_group_empty(struct rgcp_middleware_group group)
@@ -42,7 +51,7 @@ int rgcp_middleware_group_register_child(struct rgcp_middleware_group* pGroup, v
         return -1;
 
     pNew->pChild = pChild;
-    list_add_tail(&pNew->m_listEntry, &pGroup->m_pGroupChildListHead);
+    list_add_tail(&pNew->m_listEntry, &pGroup->m_groupChildListHead);
     pGroup->m_childCount++;
 
     pGroup->m_lastActivityTimestamp = time(NULL);

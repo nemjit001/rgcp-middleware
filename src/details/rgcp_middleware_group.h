@@ -17,7 +17,7 @@ struct rgcp_middleware_group_child
 struct rgcp_middleware_group
 {
     struct list_entry m_listEntry;
-    struct list_entry m_pGroupChildListHead;
+    struct list_entry m_groupChildListHead;
 
     rgcp_group_info_t m_groupNameInfo;
 
@@ -27,7 +27,7 @@ struct rgcp_middleware_group
 
 void rgcp_middleware_group_init(struct rgcp_middleware_group* pGroup, const char* pGroupName, size_t nameLength);
 
-void rgcp_middleware_group_free(struct rgcp_middleware_group group);
+void rgcp_middleware_group_free(struct rgcp_middleware_group* pGroup);
 
 int rgcp_middleware_group_empty(struct rgcp_middleware_group group);
 

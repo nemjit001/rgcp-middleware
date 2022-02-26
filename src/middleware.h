@@ -31,7 +31,7 @@ int middleware_state_init(struct middleware_state* pState, uint16_t port, time_t
 
 void middleware_state_free(struct middleware_state* pState);
 
-int middleware_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE packetType, uint8_t* pPacketData, size_t dataLength);
+int middleware_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE packetType, enum API_ERROR_TYPE errorType, uint8_t* pPacketData, size_t dataLength);
 
 int middleware_handle_incoming(struct middleware_state* pState);
 
@@ -47,9 +47,9 @@ int middleware_handle_new_group(struct middleware_state* pState, const char* pGr
 
 size_t middleware_get_groups(struct middleware_state* pState, struct rgcp_middleware_group*** pppGroups);
 
-size_t middleware_get_clients_for_group(struct middleware_state* pState, struct rgcp_middleware_group* pGroup, struct client* pClients);
+size_t middleware_get_clients_for_group(struct rgcp_middleware_group* pGroup, struct client*** pppClients);
 
-struct rgcp_group* middleware_get_group(struct middleware_state* pState, uint32_t groupHash);
+struct rgcp_middleware_group* middleware_get_group(struct middleware_state* pState, uint32_t groupHash);
 
 int middleware_group_exists(struct middleware_state* pState, uint32_t groupHash);
 
