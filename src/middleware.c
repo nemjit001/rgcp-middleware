@@ -24,6 +24,12 @@ static void handle_signal(int signum)
     {
         g_middlewareState.m_shutdownFlag = 1;
     }
+
+    // ignore SIGPIPE
+    if (signum & SIGPIPE)
+    {
+        return;
+    }
 }
 
 void _register_thread_signals()
@@ -33,6 +39,7 @@ void _register_thread_signals()
 
     sa.sa_handler = handle_signal;
     sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGPIPE, &sa, NULL);
 }
 
 int _create_listen_socket(uint16_t port)
@@ -120,13 +127,13 @@ int _connect_to_group(struct client *pClient, struct rgcp_middleware_group *pGro
 
     if (pClient->m_connectionInfo.m_bConnectionInfoSet == 0)
     {
-        log_msg(LOG_LEVEL_ERROR, "[Middleware] Client [%p] has no adress info set!\n", (void*)pClient);
+        log_msg(LOG_LEVEL_ERROR, "[Middleware] Client [%d] has no adress info set!\n", pClient->m_remoteFd);
         return -1;
     }
 
     if (pClient->m_pConnectedGroup == pGroup)
     {
-        log_msg(LOG_LEVEL_DEBUG, "[Middleware] Client [%p] is already in group 0x%x\n", (void*)pClient, pGroup->m_groupNameInfo.m_groupNameHash);
+        log_msg(LOG_LEVEL_DEBUG, "[Middleware] Client [%d] is already in group 0x%x\n", pClient->m_remoteFd, pGroup->m_groupNameInfo.m_groupNameHash);
 
         if (middleware_forward_packet_data(pClient, API_GROUP_JOIN, API_ERROR_INGRP, NULL, 0) < 0)
             return -1;
@@ -140,7 +147,7 @@ int _connect_to_group(struct client *pClient, struct rgcp_middleware_group *pGro
 
     if (rgcp_middleware_group_register_child(pGroup, (void*)pClient) < 0)
     {
-        log_msg(LOG_LEVEL_ERROR, "[Middleware] Failed to register client [%p] to group [0x%x]\n", (void*)pClient, pGroup->m_groupNameInfo.m_groupNameHash);
+        log_msg(LOG_LEVEL_ERROR, "[Middleware] Failed to register client [%d] to group [0x%x]\n", pClient->m_remoteFd, pGroup->m_groupNameInfo.m_groupNameHash);
         return -1;
     }
 
@@ -153,7 +160,9 @@ int _connect_to_group(struct client *pClient, struct rgcp_middleware_group *pGro
 
     if (clientAddrBuffLength < 0)
     {
-        // FIXME: send ERROR_SHARE to remote and remove child from group
+        if (middleware_forward_packet_data(pClient, API_GROUP_JOIN, API_ERROR_SHARE, NULL, 0) < 0)
+            return -1;
+
         return 0;
     }
 
@@ -171,6 +180,7 @@ int _connect_to_group(struct client *pClient, struct rgcp_middleware_group *pGro
             free(pClientAddrBuff);
 
             // FIXME: send ERROR_SHARE to remote and leave msg to group
+
             return 0;
         }
     }
@@ -396,7 +406,7 @@ int middleware_handle_incoming(struct middleware_state* pState)
         
         if (pCurrPollFd->revents & POLLIN)
         {
-            log_msg(LOG_LEVEL_DEBUG, "[Middleware] Client [%p] has data for middleware\n", (void*)pClient);
+            log_msg(LOG_LEVEL_DEBUG, "[Middleware] Client [%d] has data for middleware\n", pClient->m_remoteFd);
             if (middleware_handle_client_message(pState, pClient) < 0)
             {
                 successFlag = 0;
@@ -422,13 +432,12 @@ int middleware_handle_client_message(struct middleware_state* pState, struct cli
     struct api_packet* pPacket = NULL;
     if (api_packet_recv(pClient->m_communicationSockets.m_clientThreadSocket, &pPacket) < 0)
     {
-        log_msg(LOG_LEVEL_ERROR, "[Middleware] Receive from Client [%p] has failed\n", (void*)pClient);
+        log_msg(LOG_LEVEL_ERROR, "[Middleware] Receive from Client [%d] has failed\n", pClient->m_remoteFd);
         return -1;
     }
 
-    log_msg(LOG_LEVEL_DEBUG, "[Middleware] Received packet from Client [%p]: (%d, %d, %lu)\n", (void*)pClient, pPacket->m_packetType, pPacket->m_errorType, pPacket->m_dataLen);
+    log_msg(LOG_LEVEL_DEBUG, "[Middleware] Received packet from Client [%d]: (%d, %d, %lu)\n", pClient->m_remoteFd, pPacket->m_packetType, pPacket->m_errorType, pPacket->m_dataLen);
 
-    // FIXME: finish implementation
     switch (pPacket->m_packetType)
     {
     case API_DISCONNECT:
@@ -469,7 +478,7 @@ int middleware_handle_client_message(struct middleware_state* pState, struct cli
         if (deserialize_rgcp_group_name_info(&groupInfo, pPacket->m_packetData, pPacket->m_dataLen) < 0)
             goto error;
         
-        log_msg(LOG_LEVEL_DEBUG, "[Middleware] Connection request for group [%s, 0x%x] from client [%p]\n", groupInfo.m_pGroupName, groupInfo.m_groupNameHash, (void*)pClient);
+        log_msg(LOG_LEVEL_DEBUG, "[Middleware] Connection request for group [%s, 0x%x] from client [%d]\n", groupInfo.m_pGroupName, groupInfo.m_groupNameHash, pClient->m_remoteFd);
 
         if (middleware_group_exists(pState, groupInfo.m_groupNameHash) == 0)
         {
@@ -488,7 +497,7 @@ int middleware_handle_client_message(struct middleware_state* pState, struct cli
 
         if (_connect_to_group(pClient, pGroup) < 0)
         {
-            // remote in unrecoverable state, shut down client
+            // FIXME: remote in unrecoverable state, shut down client
             goto error;
         }
         

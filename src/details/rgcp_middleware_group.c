@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <string.h>
 
-#include "crc32.h"
+#include <rgcp/rgcp_crc32.h>
 
 void rgcp_middleware_group_init(struct rgcp_middleware_group* pGroup, const char* pGroupName, size_t nameLength)
 {
@@ -18,7 +18,7 @@ void rgcp_middleware_group_init(struct rgcp_middleware_group* pGroup, const char
     memcpy((void*)pGroup->m_groupNameInfo.m_pGroupName, (void*)pGroupName, nameLength);
 
     pGroup->m_groupNameInfo.m_groupNameLength = nameLength;
-    pGroup->m_groupNameInfo.m_groupNameHash = CRC32_STR_DYNAMIC(pGroupName, nameLength); 
+    pGroup->m_groupNameInfo.m_groupNameHash = RGCP_CRC32_DYNAMIC((uint8_t*)pGroupName, nameLength); 
 
     pGroup->m_lastActivityTimestamp = time(NULL);
 }

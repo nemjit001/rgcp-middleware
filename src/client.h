@@ -33,6 +33,12 @@ struct client
         socklen_t m_addrLen;
     } m_connectionInfo;
 
+    struct
+    {
+        pthread_mutex_t m_sendMtx;
+        pthread_mutex_t m_recvMtx;
+    } m_apiMtxes;
+
     struct rgcp_middleware_group* m_pConnectedGroup;
     struct client* m_pSelf;
 };
@@ -47,7 +53,7 @@ int client_register_host_data(struct client* pClient, struct rgcp_packet* pPacke
 
 int client_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE packetType, uint8_t* pPacketData, size_t dataLength);
 
-int client_send_packet_to_remote(int fd, enum RGCP_PACKET_TYPE packetType, enum RGCP_PACKET_ERROR error, uint8_t* pPacketData, size_t dataLength);
+int client_send_packet_to_remote(int fd, pthread_mutex_t* pMtx, enum RGCP_PACKET_TYPE packetType, enum RGCP_PACKET_ERROR error, uint8_t* pPacketData, size_t dataLength);
 
 int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPacket);
 

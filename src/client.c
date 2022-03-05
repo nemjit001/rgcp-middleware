@@ -20,7 +20,11 @@ int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remo
     pClient->m_remoteFd = remoteFd;
     pClient->m_connectionInfo.m_bConnectionInfoSet = 0;
     pClient->m_connectionInfo.m_peerAddress = peerAddress;
+    pClient->m_connectionInfo.m_peerAddress.sin_port = 0; // needs to be set later
     pClient->m_connectionInfo.m_addrLen = sizeof(peerAddress);
+
+    if (pthread_mutex_init(&pClient->m_apiMtxes.m_sendMtx, NULL) < 0 || pthread_mutex_init(&pClient->m_apiMtxes.m_recvMtx, NULL) < 0)
+        return -1;
 
     int sockets[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) < 0)
@@ -36,6 +40,9 @@ int client_init(struct client* pClient, struct sockaddr_in peerAddress, int remo
 
 void client_free(struct client client)
 {
+    pthread_mutex_destroy(&client.m_apiMtxes.m_sendMtx);
+    pthread_mutex_destroy(&client.m_apiMtxes.m_recvMtx);
+
     close(client.m_communicationSockets.m_mainThreadSocket);
     close(client.m_communicationSockets.m_clientThreadSocket);
     shutdown(client.m_remoteFd, SHUT_RDWR);
@@ -71,8 +78,11 @@ int client_register_host_data(struct client* pClient, struct rgcp_packet* pPacke
         return 0;
 
     pClient->m_connectionInfo.m_addrLen = peerInfo.m_addressLength;
-    pClient->m_connectionInfo.m_peerAddress = peerInfo.m_addressInfo;
+    pClient->m_connectionInfo.m_peerAddress.sin_port = peerInfo.m_addressInfo.sin_port; // only set the port, other fields have been set by middleware on connection
     pClient->m_connectionInfo.m_bConnectionInfoSet = 1;
+
+    char* ipaddrstr = inet_ntoa(pClient->m_connectionInfo.m_peerAddress.sin_addr);
+    log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Peer Connection Data: %s:%u\n", pClient->m_remoteFd, ipaddrstr, peerInfo.m_addressInfo.sin_port);
 
     return 0;
 }
@@ -107,8 +117,10 @@ int client_forward_packet_data(struct client* pClient, enum API_PACKET_TYPE pack
     return 0;
 }
 
-int client_send_packet_to_remote(int fd, enum RGCP_PACKET_TYPE packetType, enum RGCP_PACKET_ERROR error, uint8_t* pPacketData, size_t dataLength)
+int client_send_packet_to_remote(int fd, pthread_mutex_t* pMtx, enum RGCP_PACKET_TYPE packetType, enum RGCP_PACKET_ERROR error, uint8_t* pPacketData, size_t dataLength)
 {
+    assert(pMtx);
+
     if (pPacketData == NULL)
         dataLength = 0;
     
@@ -125,7 +137,7 @@ int client_send_packet_to_remote(int fd, enum RGCP_PACKET_TYPE packetType, enum 
     if (pPacketData != NULL)
         memcpy(pPacket->m_data, pPacketData, dataLength);
 
-    if (rgcp_api_send(fd, pPacket) < 0)
+    if (rgcp_api_send(fd, pMtx, pPacket) < 0)
     {
         rgcp_packet_free(pPacket);
         return -1;
@@ -175,7 +187,7 @@ int client_handle_remote_message(struct client* pClient)
 {
     struct rgcp_packet* pPacket = NULL;
 
-    if (rgcp_api_recv(pClient->m_remoteFd, &pPacket) < 0)
+    if (rgcp_api_recv(pClient->m_remoteFd, &pClient->m_apiMtxes.m_recvMtx, &pPacket) < 0)
         goto error;
 
     if (!pPacket)
@@ -232,7 +244,7 @@ int client_handle_main_thread_message(struct client* pClient)
     case API_GROUP_DISCOVERY:
     // response to group discovery, send to remote
     {
-        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_GROUP_DISCOVER_RESPONSE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
+        if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_GROUP_DISCOVER_RESPONSE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
             goto error;
         
         break;
@@ -240,41 +252,41 @@ int client_handle_main_thread_message(struct client* pClient)
     case API_GROUP_JOIN:
     {
         // response to group join, only contains error data
-        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_GROUP_JOIN_RESPONSE, packetError, NULL, 0) < 0)
+        if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_GROUP_JOIN_RESPONSE, packetError, NULL, 0) < 0)
             goto error;
 
         break;
     }
     case API_GROUP_LEAVE:
         // peer left group, send to remote
-        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_PEER_REMOVE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
+        if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_PEER_REMOVE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
             goto error;
 
         break;
     case API_GROUP_CREATE:
     {
-        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_GROUP_CREATE_RESPONSE, packetError, NULL, 0) < 0)
+        if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_GROUP_CREATE_RESPONSE, packetError, NULL, 0) < 0)
             goto error;
 
         break;
     }
     case API_PEER_SHARE:
     {
-        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_PEER_SHARE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
+        if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_PEER_SHARE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
             goto error;
 
         break;
     }
     case API_GROUP_SHARE:
     {
-        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_GROUP_JOIN_RESPONSE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
+        if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_GROUP_JOIN_RESPONSE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
             goto error;
 
         break;
     }
     case API_DISCONNECT:
     {
-        if (client_send_packet_to_remote(pClient->m_remoteFd, RGCP_TYPE_SOCKET_DISCONNECT_RESPONSE, packetError, NULL, 0) < 0)
+        if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_SOCKET_DISCONNECT_RESPONSE, packetError, NULL, 0) < 0)
             goto error;
 
         break;
@@ -336,7 +348,10 @@ int client_handle_incoming(struct client* pClient)
     {
         log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Remote Has Data Available\n", pClient->m_remoteFd);
         if (client_handle_remote_message(pClient) < 0)
-            successFlag = 0;
+        {
+            // cannot handle packet due to error, drop and continue;
+            successFlag = 1;
+        }
     }
 
     if (mainThread.revents & POLLHUP || mainThread.revents & POLLERR)
@@ -349,7 +364,10 @@ int client_handle_incoming(struct client* pClient)
     {
         log_msg(LOG_LEVEL_DEBUG, "[Client][%d] Main Thread Has Data Available\n", pClient->m_remoteFd);
         if (client_handle_main_thread_message(pClient) < 0)
+        {
+            // cannot handle packet due to comms error between client and main thread, or client and remote. Drop and error out.
             successFlag = 0;
+        }
     }
 
     return successFlag;
