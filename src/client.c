@@ -176,6 +176,7 @@ int client_process_remote_packet(struct client* pClient, struct rgcp_packet* pPa
     case RGCP_TYPE_GROUP_JOIN_RESPONSE:
     case RGCP_TYPE_PEER_REMOVE:
     case RGCP_TYPE_PEER_SHARE:
+    case RGCP_TYPE_GROUP_LEAVE_RESPONSE:
         log_msg(LOG_LEVEL_ERROR, "[Client][%d] Received invalid Packet Type (%d)\n", pClient->m_remoteFd, pPacket->m_packetType);
         return -1;
     }
@@ -258,11 +259,21 @@ int client_handle_main_thread_message(struct client* pClient)
         break;
     }
     case API_GROUP_LEAVE:
+    {
         // peer left group, send to remote
         if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_PEER_REMOVE, packetError, pPacket->m_packetData, pPacket->m_dataLen) < 0)
             goto error;
 
         break;
+    }
+    case API_GROUP_LEAVE_RESPONSE:
+    {
+        // peer left group, send to remote
+        if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_GROUP_LEAVE_RESPONSE, packetError, NULL, 0) < 0)
+            goto error;
+
+        break;
+    }
     case API_GROUP_CREATE:
     {
         if (client_send_packet_to_remote(pClient->m_remoteFd, &pClient->m_apiMtxes.m_sendMtx, RGCP_TYPE_GROUP_CREATE_RESPONSE, packetError, NULL, 0) < 0)

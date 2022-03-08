@@ -248,8 +248,14 @@ int _disconnect_from_group(struct middleware_state *pState, struct client* pClie
         struct rgcp_middleware_group_child *pCurrChild = LIST_ENTRY(pCurr, struct rgcp_middleware_group_child, m_listEntry);
         struct client *pCurrClient = (struct client*)pCurrChild->pChild;
 
+        struct _rgcp_peer_info currPeerInfo;
+        currPeerInfo.m_addressInfo = pCurrClient->m_connectionInfo.m_peerAddress;
+        currPeerInfo.m_addressLength = pCurrClient->m_connectionInfo.m_addrLen;
+        uint8_t* pCurrPeerDataBuff = NULL;
+        ssize_t currPeerBuffSize = serialize_rgcp_peer_info(&currPeerInfo, &pCurrPeerDataBuff);
+
         // error in ptrs
-        if (pCurrClient->m_pSelf != pCurrClient)
+        if (pCurrClient->m_pSelf != pCurrClient || currPeerBuffSize < 0)
         {
             // unrecoverable state
             success = 0;
@@ -261,6 +267,12 @@ int _disconnect_from_group(struct middleware_state *pState, struct client* pClie
             // unrecoverable state
             success = 0;
         }
+    }
+
+    if (middleware_forward_packet_data(pClient, API_GROUP_LEAVE_RESPONSE, API_ERROR_NOERR, NULL, 0) < 0)
+    {
+        // unrecoverable state
+        success = 0;
     }
     
     free(pDataBuffer);
