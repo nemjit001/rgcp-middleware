@@ -13,7 +13,7 @@
 #include "details/logger.h"
 
 #define MIDDLEWARE_DEFAULT_PORT 8000
-#define MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS 30
+#define MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS 5
 #define MIDDLEWARE_DEFAULT_GROUP_INACTIVE_TIMEOUT_SECONDS 60
 
 static struct middleware_state g_middlewareState = { 0 };
@@ -179,7 +179,7 @@ int _connect_to_group(struct client *pClient, struct rgcp_middleware_group *pGro
             free(pPeerInfos);
             free(pClientAddrBuff);
 
-            // FIXME: send ERROR_SHARE to remote and leave msg to group
+            // FIXME: try send ERROR_SHARE to remote and leave msg to group
 
             return 0;
         }
@@ -248,14 +248,8 @@ int _disconnect_from_group(struct middleware_state *pState, struct client* pClie
         struct rgcp_middleware_group_child *pCurrChild = LIST_ENTRY(pCurr, struct rgcp_middleware_group_child, m_listEntry);
         struct client *pCurrClient = (struct client*)pCurrChild->pChild;
 
-        struct _rgcp_peer_info currPeerInfo;
-        currPeerInfo.m_addressInfo = pCurrClient->m_connectionInfo.m_peerAddress;
-        currPeerInfo.m_addressLength = pCurrClient->m_connectionInfo.m_addrLen;
-        uint8_t* pCurrPeerDataBuff = NULL;
-        ssize_t currPeerBuffSize = serialize_rgcp_peer_info(&currPeerInfo, &pCurrPeerDataBuff);
-
         // error in ptrs
-        if (pCurrClient->m_pSelf != pCurrClient || currPeerBuffSize < 0)
+        if (pCurrClient->m_pSelf != pCurrClient)
         {
             // unrecoverable state
             success = 0;
@@ -266,6 +260,7 @@ int _disconnect_from_group(struct middleware_state *pState, struct client* pClie
         {
             // unrecoverable state
             success = 0;
+            continue;
         }
     }
 
@@ -526,6 +521,7 @@ int middleware_handle_client_message(struct middleware_state* pState, struct cli
         if (_disconnect_from_group(pState, pClient, pGroup) < 0)
             goto error;
 
+        pClient->m_pConnectedGroup = NULL;
         break;
     }
     default:
@@ -565,6 +561,14 @@ int middleware_check_client_states(struct middleware_state* pState)
                     continue;
 
                 return -1;
+            }
+
+            if (pClient->m_pConnectedGroup != NULL)
+            {
+                if (_disconnect_from_group(pState, pClient, pClient->m_pConnectedGroup) < 0)
+                    return -1;
+
+                pClient->m_pConnectedGroup = NULL;
             }
 
             list_del(pCurr);
@@ -690,7 +694,7 @@ size_t middleware_get_clients_for_group(struct rgcp_middleware_group* pGroup, st
     assert(pppClients);
 
     (*pppClients) = NULL;
-    (*pppClients) = calloc(pGroup->m_childCount, sizeof(struct client));
+    (*pppClients) = calloc(pGroup->m_childCount, sizeof(struct client*));
 
     size_t idx = 0;
     struct list_entry *pCurr, *pNext;
