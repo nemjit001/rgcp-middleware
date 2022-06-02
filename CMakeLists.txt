@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(rgcp VERSION 1.0.1 DESCRIPTION "RGCP networking middleware")
+project(rgcp VERSION 1.1.0 DESCRIPTION "RGCP networking middleware")
 include(GNUInstallDirs)
 
 set(TARGET_NAME rgcp_middleware)
@@ -11,6 +11,7 @@ set(EXECUTABLE_OUTPUT_PATH ${CMAKE_SOURCE_DIR}/bin)
 
 add_executable(${TARGET_NAME}
     src/details/logger.c
+    src/details/arg_parser.c
     src/details/api_packet.c
     src/details/rgcp_middleware_group.c
     src/client.c

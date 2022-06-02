@@ -11,6 +11,7 @@
 #include <rgcp/rgcp_group.h>
 
 #include "details/logger.h"
+#include "details/arg_parser.h"
 
 #define MIDDLEWARE_DEFAULT_PORT 8000
 #define MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS 5
@@ -744,10 +745,34 @@ int middleware_group_exists(struct middleware_state* pState, uint32_t groupHash)
     return 0;
 }
 
-int main(__attribute__((unused)) int argc, __attribute__((unused)) char** argv)
+int main(int argc, char** argv)
 {
     logger_init();
-    if (middleware_state_init(&g_middlewareState, MIDDLEWARE_DEFAULT_PORT, MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS, MIDDLEWARE_DEFAULT_GROUP_INACTIVE_TIMEOUT_SECONDS) < 0)
+
+    if (parse_middleware_arguments(argc, argv) < 0)
+    {
+        log_msg(LOG_LEVEL_ERROR, "Error parsing args\n");
+        return 0;
+    }
+
+    if (g_bDisplayHelp != 0)
+    {
+        log_msg(LOG_LEVEL_DEBUG, "Displayed Help Message\n");
+        return 0;
+    }
+
+    if (g_bPortIsSet == 0)
+        g_middlewarePort = MIDDLEWARE_DEFAULT_PORT;
+
+    if (g_bHeartbeatTimeoutIsSet == 0)
+        g_heartbeatTimeout = MIDDLEWARE_DEFAULT_HEARTBEAT_TIMEOUT_SECONDS;
+
+    if (g_bGroupTimeoutIsSet == 0)
+        g_groupTimeout = MIDDLEWARE_DEFAULT_GROUP_INACTIVE_TIMEOUT_SECONDS;
+
+    log_msg(LOG_LEVEL_DEBUG, "Initializing with params:\n\t(b: %ld, g: %ld, p: %d)\n", g_heartbeatTimeout, g_groupTimeout, g_middlewarePort);
+
+    if (middleware_state_init(&g_middlewareState, g_middlewarePort, g_heartbeatTimeout, g_groupTimeout) < 0)
     {
         perror("Failed to initialize Middleware");
         return -1;
