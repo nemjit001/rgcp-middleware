@@ -23,7 +23,8 @@ find_package(Threads)
 target_compile_options(${TARGET_NAME} PRIVATE -Wall -Wextra -Werror -pedantic -g)
 
 target_link_libraries(${TARGET_NAME} ${CMAKE_THREAD_LIBS_INIT})
-target_link_libraries(${TARGET_NAME} dl pthread rgcp)
+target_link_libraries(${TARGET_NAME} dl pthread)
+target_link_libraries(${TARGET_NAME} -L~/libs/ rgcp)
 
 set_target_properties(${TARGET_NAME} PROPERTIES
     VERSION ${PROJECT_VERSION}
