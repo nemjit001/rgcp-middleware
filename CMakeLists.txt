@@ -24,7 +24,14 @@ target_compile_options(${TARGET_NAME} PRIVATE -Wall -Wextra -Werror -pedantic -g
 
 target_link_libraries(${TARGET_NAME} ${CMAKE_THREAD_LIBS_INIT})
 target_link_libraries(${TARGET_NAME} dl pthread)
-target_link_libraries(${TARGET_NAME} -L~/libs/ rgcp)
+
+add_library(rgcp SHARED IMPORTED)
+set_target_properties(rgcp PROPERTIES
+    IMPORTED_LOCATION "$ENV{HOME}/libs/librgcp.so"
+    INTERFACE_INCLUDE_DIRECTORIES "$ENV{HOME}/include"
+)
+
+target_link_libraries(${TARGET_NAME} rgcp)
 
 set_target_properties(${TARGET_NAME} PROPERTIES
     VERSION ${PROJECT_VERSION}
@@ -32,6 +39,7 @@ set_target_properties(${TARGET_NAME} PROPERTIES
 
 target_include_directories(${TARGET_NAME} PRIVATE src)
 target_include_directories(${TARGET_NAME} PRIVATE include)
+target_include_directories(${TARGET_NAME} PRIVATE ~/include)
 
 install(
     TARGETS ${TARGET_NAME}
